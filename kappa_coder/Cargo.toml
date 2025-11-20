@@ -6,4 +6,5 @@ edition = "2024"
 [dependencies]
 data_model = { path = "../../KappaLibrary/data_model" }
 processor_engine = { path = "../../KappaLibrary/processor_engine" }
+interfaces = { path = "../../KappaLibrary/interfaces" }
 libloading = "0.9.0"

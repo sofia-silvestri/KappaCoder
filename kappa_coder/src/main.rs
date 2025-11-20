@@ -1,21 +1,25 @@
-use std::ffi::c_void;
+pub mod library_manager;
+pub mod coder;
+
 use std::env;
-use libloading::{Library, Symbol};
-use data_model::modules::ModuleStruct;
-use processor_engine::stream_processor::StreamProcessor;
-use processor_engine::ffi::{TraitObjectRepr, import_stream_processor, c_char_to_string, ModuleHandle};
+
+use crate::coder::Coder;
+
 
 fn print_usage() {
     println!("Usage: kappa_coder [help|[port=port_number] [addr=server_address]]");
 }
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut server_port: u16 = 8080;
     let mut server_addr: String = "0.0.0.0".to_string();
+    let mut library_path: String = "./libraries".to_string();
+    let mut source_path: String = "./sources".to_string();
     for arg in args.into_iter().skip(1) {
-        match arg.as_str() {
-            "help" => print_usage(),
-            _ => print_usage(),
+        if arg == "help" {
+            print_usage();
+            return;
         }
         if arg.contains("port") {
             arg.split('=').for_each(|part| {
@@ -29,16 +33,17 @@ fn main() {
                 server_addr = part.to_string();
             });
         }
-    }
-    let handle = ModuleHandle::new("../../KappaLibrary/target/debug/libdigital_transform.so").unwrap();
-    
-    println!("Loaded module: {}", c_char_to_string(handle.module.name).unwrap());
-    unsafe {
-        let ptr_proc: TraitObjectRepr = (handle.get_processor_modules)(b"fft_f32".as_ptr(), 7, b"fft_block".as_ptr(), 9);
-        if ptr_proc.vtable.is_null() {
-            println!("Processor {} not found", "fft_f32");
-            return;
+        if arg.contains("library_path") {
+            arg.split('=').for_each(|part| {
+                library_path = part.to_string();
+            });
         }
-        let processor: Box<dyn StreamProcessor> = import_stream_processor(ptr_proc);
+        if arg.contains("source_path") {
+            arg.split('=').for_each(|part| {
+                source_path = part.to_string();
+            });
+        }
     }
+    let join_handle = Coder::start_coder_server(server_addr, server_port, library_path, source_path);
+    join_handle.join().unwrap();
 }
