@@ -1,9 +1,10 @@
 pub mod library_manager;
-pub mod coder;
+pub mod server;
+pub mod parser;
 
 use std::env;
 
-use crate::coder::Coder;
+use crate::server::Server;
 
 
 fn print_usage() {
@@ -44,6 +45,6 @@ fn main() {
             });
         }
     }
-    let join_handle = Coder::start_coder_server(server_addr, server_port, library_path, source_path);
+    let join_handle = Server::start_coder_server(server_addr, server_port, library_path, source_path);
     join_handle.join().unwrap();
 }

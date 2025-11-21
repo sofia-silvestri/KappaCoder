@@ -3,19 +3,20 @@ use crate::library_manager::LibraryManager;
 use processor_engine::stream_processor::{StreamProcessor, StreamBlock};
 use data_model::streaming_data::StreamingError;
 use interfaces::tcp_interface::TcpReceiver;
+use crate::parser::Parser;
 
-pub struct Coder {
+pub struct Server {
     code_path: String,
 }
 
-impl Coder {
+impl Server {
     pub fn start_coder_server(
         server_addr: String,
         server_port: u16,
         library_path: String,
         source_path: String,
     ) -> std::thread::JoinHandle<()> {
-        let mut coder = Coder {
+        let mut coder = Server {
             code_path: source_path,
         };
         if coder.init_library(library_path).is_ok() {
@@ -40,19 +41,33 @@ impl Coder {
         tcp_receiver.set_statics_value::<u16>("port", port)?;
         tcp_receiver.set_statics_value::<String>("address", address)?;
         tcp_receiver.init()?;
-        println!("Coder server initialized.");
+        println!("kappa_coder server initialized.");
         let (sender, receiver) = mpsc::sync_channel::<String>(1);
-        tcp_receiver.connect("output", sender)?;
+        tcp_receiver.connect("received", sender)?;
         std::thread::spawn (move || {
             tcp_receiver.run()
         });
         loop {
             let command = receiver.recv().unwrap();
+            if command.contains("exit") {
+                break;
+            }
             print!("Received {}", command);
+            let parsed_commands = Parser::parse_command(command.clone());
+            match parsed_commands {
+                Ok(commands) => { },
+                Err(e) => {
+                    eprintln!("Error parsing command: {}", e);
+                    continue;
+                }
+            }
+            
         }
+        self.stop();
+        Ok(())
     }
 
     pub fn stop(&mut self) {
-        println!("Coder server stopped.");
+        println!("kappa_coder server stopped.");
     }
 }
