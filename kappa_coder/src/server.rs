@@ -1,13 +1,10 @@
 use std::sync::mpsc;
 use crate::library_manager::LibraryManager;
 use processor_engine::stream_processor::{StreamProcessor, StreamBlock};
-use data_model::streaming_data::StreamingError;
 use interfaces::tcp_interface::TcpReceiver;
 use crate::parser::Parser;
-
-pub struct Server {
-    code_path: String,
-}
+use crate::coder::Coder;
+pub struct Server;
 
 impl Server {
     pub fn start_coder_server(
@@ -16,12 +13,11 @@ impl Server {
         library_path: String,
         source_path: String,
     ) -> std::thread::JoinHandle<()> {
-        let mut coder = Server {
-            code_path: source_path,
-        };
-        if coder.init_library(library_path).is_ok() {
+        let mut server = Server;
+        Coder::get().lock().unwrap().set_code_path(source_path.clone());
+        if server.init_library(library_path).is_ok() {
             std::thread::spawn(move || {
-                coder.run_server(server_port, server_addr).unwrap()
+                server.run_server(server_port, server_addr).unwrap()
             })
         } else {
             panic!("Failed to initialize coder server.");
@@ -36,38 +32,36 @@ impl Server {
         Ok(())
     }
 
-    pub fn run_server(&mut self, port: u16, address: String) -> Result<(), StreamingError>{
+    pub fn run_server(&mut self, port: u16, address: String) -> Result<(), String>{
         let mut tcp_receiver = TcpReceiver::<String>::new("coder_server");
-        tcp_receiver.set_statics_value::<u16>("port", port)?;
-        tcp_receiver.set_statics_value::<String>("address", address)?;
-        tcp_receiver.init()?;
+        tcp_receiver.set_statics_value::<u16>("port", port).unwrap();
+        tcp_receiver.set_statics_value::<String>("address", address).unwrap();
+        match tcp_receiver.init() {
+            Ok(_) => println!("kappa_coder server initialized tcp receiver."),
+            Err(e) => return Err(format!("Error initializing tcp receiver: {}", e)),
+        }
         println!("kappa_coder server initialized.");
         let (sender, receiver) = mpsc::sync_channel::<String>(1);
-        tcp_receiver.connect("received", sender)?;
+        match tcp_receiver.connect("received", sender) {
+            Ok(_) => println!("kappa_coder server connected."),
+            Err(e) => return Err(format!("Error connecting tcp receiver: {}", e)),
+        }
         std::thread::spawn (move || {
             tcp_receiver.run()
         });
         loop {
-            let command = receiver.recv().unwrap();
-            if command.contains("exit") {
-                break;
-            }
-            print!("Received {}", command);
-            let parsed_commands = Parser::parse_command(command.clone());
-            match parsed_commands {
-                Ok(commands) => { },
-                Err(e) => {
-                    eprintln!("Error parsing command: {}", e);
-                    continue;
-                }
-            }
+            let mut command = receiver.recv().unwrap();
+            command = command
+            .chars()
+            .filter(|c| {
+                *c != '\n' && *c != '\r'
+            })
+            .collect();
+            //print!("Received {}", command);
+            Parser::parse_command(command.clone())?;
             
         }
-        self.stop();
-        Ok(())
-    }
-
-    pub fn stop(&mut self) {
         println!("kappa_coder server stopped.");
+        Ok(())
     }
 }

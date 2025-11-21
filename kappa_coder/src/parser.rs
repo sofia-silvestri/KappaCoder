@@ -1,9 +1,19 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
+use crate::coder::Coder;
 
 pub struct MemoryObject {
     parent: String,
     object_type: String,
+}
+
+impl MemoryObject {
+    pub fn get_parent(&self) -> &String {
+        &self.parent
+    }
+    pub fn get_object_type(&self) -> &String {
+        &self.object_type
+    }
 }
 
 type ParserFunction = fn(&mut Parser, Vec<String>) -> Result<(), String>;
@@ -13,7 +23,8 @@ pub struct Parser {
     types : Vec<String>,
     memory_objects: HashMap<String, MemoryObject>,
     connections_list: Vec<(String, String)>,
-    settable: HashMap<String, Box<dyn Any>>,
+    typed: HashMap<String, String>,
+    settable: HashMap<String, String>,
 }
 
 impl Parser {
@@ -24,12 +35,12 @@ impl Parser {
         commands.insert("delete".to_string(), Parser::parse_delete);
         commands.insert("connect".to_string(), Parser::parse_connect);
         commands.insert("set".to_string(), Parser::parse_set);
-        commands.insert("code".to_string(), Parser::parse_code);
         commands.insert("build".to_string(), Parser::parse_build);
         let mut types = Vec::<String>::new();
         types.push("crate".to_string());
-        types.push("type".to_string());
+        types.push("task".to_string());
         types.push("processor".to_string());
+        types.push("code".to_string());
         types.push("input".to_string());
         types.push("output".to_string());
         types.push("parameter".to_string());
@@ -40,10 +51,136 @@ impl Parser {
             types,
             memory_objects: HashMap::new(),
             connections_list: Vec::new(),
+            typed: HashMap::new(),
+            settable: HashMap::new(),
         }
     }
     pub fn get() -> &'static Mutex<Parser> {
         PARSER.get_or_init(|| Mutex::new(Parser::new()))
+    }
+    fn parse_create_crate(&mut self, name: &String) -> Result<(), String> {
+        println!("Creating crate with name {}", name);
+        let new_object = MemoryObject {
+            parent: "root".to_string(),
+            object_type: "crate".to_string(),
+        };
+        self.memory_objects.insert(name.to_string(), new_object);
+        Ok(())
+    }
+    fn parse_create_task(&mut self, name: &String) {
+        println!("Creating task with name {}", name);
+        let new_object = MemoryObject {
+            parent: "root".to_string(),
+            object_type: "task".to_string(),
+        };
+        self.memory_objects.insert(name.to_string(), new_object);
+    }
+    fn parse_create_processor(&mut self, name: &String, args: &Vec<String>) -> Result<(), String> {
+        let mut parent_name = "root";
+        if Some(&"in".to_string()) == args.get(2) {
+            parent_name = args.get(3).ok_or("Missing parent name argument.".to_string())?;
+            if !self.memory_objects.contains_key(parent_name) {
+                return Err(format!("Parent object {} does not exist.", parent_name));
+            }
+            let (_, value) = self.memory_objects.get_key_value(parent_name).unwrap();
+            if value.object_type != "crate" || value.object_type != "task" {
+                return Err(format!("Processor can be added only to task or library"));
+            }
+        }
+        println!("Creating processor with name {} in parent {}", name, parent_name);
+        let new_object = MemoryObject {
+            parent: parent_name.to_string(),
+            object_type: "processor".to_string(),
+        };
+        self.memory_objects.insert(name.to_string(), new_object);
+        Ok(())
+    }
+    pub fn parse_create_code(&mut self, name: &String, args: &Vec<String>) -> Result<(), String> {
+        if args.get(1) != Some(&"in".to_string()) {
+            return Err("Missing in keyword".to_string());
+        }
+        let parent_name = args.get(2).ok_or("Missing parent name argument.".to_string())?;
+        if !self.memory_objects.contains_key(parent_name) {
+            return Err(format!("Parent object {} does not exist.", parent_name));
+        }
+        let (_, value) = self.memory_objects.get_key_value(parent_name).unwrap();
+        if value.object_type != "processor" && value.object_type != "taask" {
+            return Err(format!("Cannot add code to non-processor object {}.", parent_name));
+        }
+        println!("Creating code in parent {}", parent_name);
+        let new_object = MemoryObject {
+            parent: parent_name.to_string(),
+            object_type: "processor".to_string(),
+        };
+        self.memory_objects.insert(name.to_string(), new_object);
+        Ok(())
+    }
+    fn parse_create_typed(&mut self, name: &String, args: &Vec<String>, _type: &String) -> Result<(), String> {
+        if args.get(2) != Some(&"type".to_string()) {
+            return Err("Expected 'type' keyword.".to_string());
+        }
+        let type_name = args.get(3).ok_or("Missing type name argument.".to_string())?;
+        self.typed.insert(name.to_string(), type_name.to_string());
+        if args.get(4) == Some(&"in".to_string()) {
+            let parent_name = args.get(5).ok_or("Missing parent name argument.".to_string())?;
+            if !self.memory_objects.contains_key(parent_name) {
+                return Err(format!("Parent object {} does not exist.", parent_name));
+            }
+            let (_, value) = self.memory_objects.get_key_value(parent_name).unwrap();
+            if value.object_type != "processor" {
+                return Err(format!("Cannot add {} to non-processor object {}.", _type, parent_name));
+            }
+            println!("Creating {} with name {} of type {} in parent {}", _type, name, type_name, parent_name);
+            let new_object = MemoryObject {
+                parent: parent_name.to_string(),
+                object_type: _type.to_string(),
+            };
+            self.memory_objects.insert(name.to_string(), new_object);
+        } else {
+            println!("Creating {} with name {} of type {} with no parent", _type, name, type_name);
+            let new_object = MemoryObject {
+                parent: "root".to_string(),
+                object_type: _type.to_string(),
+            };
+            self.memory_objects.insert(name.to_string(), new_object);
+        }
+        Ok(())
+    }
+    pub fn parse_create_settable(&mut self, name: &String, args: &Vec<String>, _type: &String) -> Result<(), String> {
+        if args.get(2) != Some(&"type".to_string()) {
+            return Err("Expected 'type' keyword.".to_string());
+        }
+        let type_name = args.get(3).ok_or("Missing type name argument.".to_string())?;
+        let default_flag = args.get(4).ok_or("Missing 'default' argument.".to_string())?;
+        if default_flag != "default" {
+            return Err("Expected 'default' keyword.".to_string());
+        }
+        let default_value = args.get(5).ok_or("Missing default value argument.".to_string())?;
+        self.settable.insert(name.to_string(), default_value.to_string());
+        if args.get(6) == Some(&"in".to_string()) {
+            let parent_name = args.get(7).ok_or("Missing parent name argument.".to_string())?;
+            if !self.memory_objects.contains_key(parent_name) {
+                return Err(format!("Parent object {} does not exist.", parent_name));
+            }
+            let (_, value) = self.memory_objects.get_key_value(parent_name).unwrap();
+            if value.object_type != "processor" {
+                return Err(format!("Cannot add {} to non-processor object {}.", _type, parent_name));
+            }
+            println!("Creating {} with name {} of type {} with default {} in parent {}", _type, name, type_name, default_value, parent_name);
+            let new_object = MemoryObject {
+                parent: parent_name.to_string(),
+                object_type: _type.to_string(),
+            };
+            self.memory_objects.insert(name.to_string(), new_object);
+        } else {
+            println!("Creating {} with name {} of type {} with default {} with no parent", _type, name, type_name, default_value);
+            let new_object = MemoryObject {
+                parent: "root".to_string(),
+                object_type: _type.to_string(),
+            };
+            self.memory_objects.insert(name.to_string(), new_object);
+        }
+        Ok(())
     }
     pub fn parse_create(&mut self, args: Vec<String>) -> Result<(), String> {
         // Implement create command parsing logic here
@@ -53,41 +190,33 @@ impl Parser {
             if self.memory_objects.contains_key(name) {
                 return Err(format!("Object with name {} already exists.", name));
             }
-            if args.len() == 4 && args[2] == "in" {
-                let parent_name = args.get(3).ok_or("Missing parent name argument.".to_string())?;
-                if !self.memory_objects.contains_key(parent_name) {
-                    return Err(format!("Parent object {} does not exist.", parent_name));
+            match _type.as_str() {
+                "crate" => {
+                    if args.len() > 2 {
+                        return Err("Invalid argument for crate creation".to_string());
+                    }
+                    self.parse_create_crate(name)?;
                 }
-                let (_, value) = self.memory_objects.get_key_value(parent_name).unwrap();
-                match _type.as_str() {
-                    "input" | "output" | "parameter" | "static" | "state" => {
-                        if value.object_type != "processor" {
-                            return Err(format!("Cannot create {} in non-processor object {}.", _type, parent_name));
-                        }
-                    }
-                    "processor" => {
-                        if value.object_type != "crate" {
-                            return Err(format!("Cannot create processor in non-crate object {}.", parent_name));
-                        }
-                    }
-                    "crate" => {
-                        return Err("Cannot create crate inside another object.".to_string());
-                    }
-                    _ => {}
+                "task" => {
+                    self.parse_create_task(name);
+                    return Err("Task creation not implemented yet.".to_string());
                 }
-                println!("Creating {} of type {} in parent {}", name, args[0], parent_name);
-                self.memory_objects.insert(name.to_string(), MemoryObject {
-                    parent: parent_name.to_string(),
-                    object_type: args[0].to_string(),
-                });
-            } else if args.len() == 2 {
-                println!("Creating {} of type {}", name, args[0]);
-                self.memory_objects.insert(name.to_string(), MemoryObject {
-                    parent: "".to_string(),
-                    object_type: args[0].to_string(),
-                });
-            } else {
-                return Err("Invalid create command format.".to_string());
+                "processor" => {
+                    self.parse_create_processor(name, &args)?;
+                }
+                "input" | "output" | "state" => {
+                    self.parse_create_typed(name, &args, _type)?;
+                }
+                "parameter" | "static" => {
+                    self.parse_create_settable(name, &args, _type)?;
+                }
+                "code" => {
+                    self.parse_create_code(name, &args)?;
+                }
+                _ => {
+                    // Dosen't need but rust wants it
+                    return Err(format!("Unknown type: {}", _type));
+                }
             }
         } else {
             return Err(format!("Unknown type: {}", args[0]));
@@ -187,19 +316,14 @@ impl Parser {
             return Err(format!("Object {} is not an settable.", name));
         }
         println!("Setting {} to value {}", name, args[1]);
-        self.settable.insert(name.to_string(), Box::new(args[1].clone()));
-        Ok(())
-    }
-    pub fn parse_code(&mut self, args: Vec<String>) -> Result<(), String> {
-        // Implement set command parsing logic here
+        self.settable.insert(name.to_string(), args[1].clone());
         Ok(())
     }
     pub fn parse_build(&mut self, args: Vec<String>) -> Result<(), String> {
         // Implement set command parsing logic here
         Ok(())
     }
-    pub fn parse_command(data: String) -> Result<Vec<Vec<String>>, String> {
-        let mut commands: Vec<Vec<String>> = Vec::new();
+    pub fn parse_command(data: String) -> Result<(), String> {
         let parts: Vec<String> = data
             .split(';')
             .map(|s| s.trim().to_string())
@@ -224,20 +348,17 @@ impl Parser {
             let parser_function : ParserFunction;
             {
                 let parser = Parser::get().lock().unwrap();
-                if let Some((key, key_value)) = parser.commands.get_key_value(&command_name) {
+                if let Some((_key, key_value)) = parser.commands.get_key_value(&command_name) {
                     parser_function = *key_value;
                 } else {
                     return Err(format!("Unknown command: {}", command_name));
                 }
             }
             let args = sub_parts[1..].to_vec();
-            match parser_function(&mut *Parser::get().lock().unwrap(), args) {
-                Ok(_) => commands.push(sub_parts),
-                Err(e) => return Err(e),
-            }
+            parser_function(&mut *Parser::get().lock().unwrap(), args)?;
+            Coder::get().lock().unwrap().generate(sub_parts.clone())?;
         }
-        println!("Parsed commands: {:?}", commands);
-        Ok(commands)
+        Ok(())
     }
 }
 
