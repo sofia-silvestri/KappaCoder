@@ -13,6 +13,7 @@ pub struct Parser {
     types : Vec<String>,
     memory_objects: HashMap<String, MemoryObject>,
     connections_list: Vec<(String, String)>,
+    settable: HashMap<String, Box<dyn Any>>,
 }
 
 impl Parser {
@@ -186,6 +187,7 @@ impl Parser {
             return Err(format!("Object {} is not an settable.", name));
         }
         println!("Setting {} to value {}", name, args[1]);
+        self.settable.insert(name.to_string(), Box::new(args[1].clone()));
         Ok(())
     }
     pub fn parse_code(&mut self, args: Vec<String>) -> Result<(), String> {
