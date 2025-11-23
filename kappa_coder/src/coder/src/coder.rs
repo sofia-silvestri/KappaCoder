@@ -213,7 +213,6 @@ impl Coder {
             Some(command) => {
                 match command.as_str() {
                     "create" => { self.code_create(command_parts)?;},
-                    "add" => todo!(),
                     "delete" => todo!(),
                     "connect" => todo!(),
                     "set" => todo!(),

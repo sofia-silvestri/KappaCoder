@@ -31,13 +31,13 @@ impl Parser {
     fn new() -> Self {
         let mut commands: HashMap<String, ParserFunction> = HashMap::new();
         commands.insert("create".to_string(), Parser::parse_create);
-        commands.insert("add".to_string(), Parser::parse_add);
         commands.insert("delete".to_string(), Parser::parse_delete);
         commands.insert("connect".to_string(), Parser::parse_connect);
         commands.insert("set".to_string(), Parser::parse_set);
         commands.insert("build".to_string(), Parser::parse_build);
         let mut types = Vec::<String>::new();
         types.push("crate".to_string());
+        types.push("application".to_string());
         types.push("task".to_string());
         types.push("processor".to_string());
         types.push("code".to_string());
@@ -69,23 +69,43 @@ impl Parser {
         Ok(())
     }
     fn parse_create_crate(&mut self, name: &String, args: &Vec<String>) -> ParserFunctionReturn {
+        if args.len() > 4 {
+            return Err("Too many arguments for creating application.".to_string());
+        }
         println!("Creating crate with name {}", name);
         let new_object = MemoryObject {
             parent: "root".to_string(),
             object_type: "crate".to_string(),
         };
-        if args.get(3) != Some(&"metadata".to_string()) {
+        if args.get(2) != Some(&"metadata".to_string()) {
             return Err("Expected 'metadata' keyword.".to_string());
         }
-        let _metadata = args.get(4).ok_or("Missing metadata argument.".to_string())?;
+        let _metadata = args.get(3).ok_or("Missing metadata argument.".to_string())?;
         // TODO: Check if metasdata is valid JSON for ModuleStruct
         self.memory_objects.insert(name.to_string(), new_object);
         Ok(())
     }
-    fn parse_create_task(&mut self, name: &String)  -> ParserFunctionReturn {
-        println!("Creating task with name {}", name);
+    fn parse_create_application(&mut self, name: &String, _args: &Vec<String>)  -> ParserFunctionReturn {
+        if _args.len() > 2 {
+            return Err("Too many arguments for creating application.".to_string());
+        }
+        println!("Creating application with name {}", name);
         let new_object = MemoryObject {
             parent: "root".to_string(),
+            object_type: "application".to_string(),
+        };
+        self.memory_objects.insert(name.to_string(), new_object);
+        Ok(())
+    }
+    fn parse_create_task(&mut self, name: &String, args: &Vec<String>)  -> ParserFunctionReturn {
+        if Some(&"in".to_string()) != args.get(2) {
+            return Err("Expected 'in' keyword.".to_string());
+        }
+        let parent_name = args.get(3).ok_or("Missing parent name argument.".to_string())?;
+        self.check_var(parent_name, "application")?;
+        println!("Creating task with name {} in parent {}", name, parent_name);
+        let new_object = MemoryObject {
+            parent: parent_name.to_string(),
             object_type: "task".to_string(),
         };
         self.memory_objects.insert(name.to_string(), new_object);
@@ -199,6 +219,9 @@ impl Parser {
             match _type.as_str() {
                 "crate" => {
                     self.parse_create_crate(name, &args)?;
+                }
+                "application" => {
+                    self.parse_create_application(name, &args)?;
                 }
                 "task" => {
                     self.parse_create_task(name, &args)?;
