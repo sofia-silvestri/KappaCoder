@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
-use crate::coder::Coder;
+use coder::coder::Coder;
 
 pub struct MemoryObject {
     parent: String,
@@ -68,22 +68,28 @@ impl Parser {
         }
         Ok(())
     }
-    fn parse_create_crate(&mut self, name: &String) -> ParserFunctionReturn {
+    fn parse_create_crate(&mut self, name: &String, args: &Vec<String>) -> ParserFunctionReturn {
         println!("Creating crate with name {}", name);
         let new_object = MemoryObject {
             parent: "root".to_string(),
             object_type: "crate".to_string(),
         };
+        if args.get(3) != Some(&"metadata".to_string()) {
+            return Err("Expected 'metadata' keyword.".to_string());
+        }
+        let _metadata = args.get(4).ok_or("Missing metadata argument.".to_string())?;
+        // TODO: Check if metasdata is valid JSON for ModuleStruct
         self.memory_objects.insert(name.to_string(), new_object);
         Ok(())
     }
-    fn parse_create_task(&mut self, name: &String) {
+    fn parse_create_task(&mut self, name: &String)  -> ParserFunctionReturn {
         println!("Creating task with name {}", name);
         let new_object = MemoryObject {
             parent: "root".to_string(),
             object_type: "task".to_string(),
         };
         self.memory_objects.insert(name.to_string(), new_object);
+        Ok(())
     }
     fn parse_create_processor_block(&mut self, name: &String, args: &Vec<String>) -> ParserFunctionReturn {
         if Some(&"in".to_string()) != args.get(2) {
@@ -192,16 +198,10 @@ impl Parser {
             }
             match _type.as_str() {
                 "crate" => {
-                    if args.len() > 2 {
-                        return Err("Invalid argument for crate creation".to_string());
-                    }
-                    self.parse_create_crate(name)?;
+                    self.parse_create_crate(name, &args)?;
                 }
                 "task" => {
-                     if args.len() > 2 {
-                        return Err("Invalid argument for task creation".to_string());
-                    }
-                    self.parse_create_task(name);
+                    self.parse_create_task(name, &args)?;
                 }
                 "processor_block" => {
                     self.parse_create_processor_block(name, &args)?;
@@ -342,6 +342,7 @@ impl Parser {
             }
             let args = sub_parts[1..].to_vec();
             parser_function(&mut *Parser::get().lock().unwrap(), args)?;
+            
             Coder::get().lock().unwrap().generate(sub_parts.clone())?;
         }
         Ok(())

@@ -13,3 +13,12 @@ enum ModCoderParts {
     ProcessBody,
     StopBody,
 }
+
+#[derive(Clone)]
+pub struct ProcessorCoder {}
+
+impl ProcessorCoder {
+    pub fn new() -> Self {
+        ProcessorCoder {}
+    }
+}

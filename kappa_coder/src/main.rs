@@ -58,5 +58,11 @@ fn main() {
         dynamic_libraries_path,
         kappa_library_path,
         source_path);
-    join_handle.join().unwrap();
+    match join_handle {
+        Ok(handle) => handle.join().unwrap(),
+        Err(e) => {
+            eprintln!("Failed to start coder server: {}", e);
+            return;
+        }
+    };
 }
