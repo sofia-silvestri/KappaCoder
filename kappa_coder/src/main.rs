@@ -1,7 +1,6 @@
 pub mod library_manager;
 pub mod server;
 pub mod parser;
-pub mod coder;
 
 use std::env;
 
@@ -14,10 +13,12 @@ fn print_usage() {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    let application_path = env::current_exe().unwrap();
     let mut server_port: u16 = 8080;
     let mut server_addr: String = "0.0.0.0".to_string();
-    let mut library_path: String = "./libraries".to_string();
-    let mut source_path: String = "./sources".to_string();
+    let mut dynamic_libraries_path: String = format!("{}/libraries", application_path.parent().unwrap().to_str().unwrap());
+    let mut kappa_library_path: String = format!("{}/ksppa_library", application_path.parent().unwrap().to_str().unwrap());
+    let mut source_path: String = format!("{}/sources", application_path.parent().unwrap().to_str().unwrap());
     for arg in args.into_iter().skip(1) {
         if arg == "help" {
             print_usage();
@@ -35,9 +36,14 @@ fn main() {
                 server_addr = part.to_string();
             });
         }
-        if arg.contains("library_path") {
+        if arg.contains("dynamic_lib") {
             arg.split('=').for_each(|part| {
-                library_path = part.to_string();
+                dynamic_libraries_path = part.to_string();
+            });
+        }
+        if arg.contains("kappa_lib") {
+            arg.split('=').for_each(|part| {
+                kappa_library_path = part.to_string();
             });
         }
         if arg.contains("source_path") {
@@ -46,6 +52,11 @@ fn main() {
             });
         }
     }
-    let join_handle = Server::start_coder_server(server_addr, server_port, library_path, source_path);
+    let join_handle = Server::start_coder_server(
+        server_addr, 
+        server_port, 
+        dynamic_libraries_path,
+        kappa_library_path,
+        source_path);
     join_handle.join().unwrap();
 }

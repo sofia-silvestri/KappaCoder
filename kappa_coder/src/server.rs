@@ -1,7 +1,7 @@
 use std::sync::mpsc;
 use crate::library_manager::LibraryManager;
 use processor_engine::stream_processor::{StreamProcessor, StreamBlock};
-use interfaces::tcp_interface::TcpReceiver;
+use interfaces::tcp_interface::{TcpReceiver, TcpMessage};
 use crate::parser::Parser;
 use crate::coder::Coder;
 pub struct Server;
@@ -10,12 +10,14 @@ impl Server {
     pub fn start_coder_server(
         server_addr: String,
         server_port: u16,
-        library_path: String,
+        dynamic_libraries: String,
+        kappa_library: String,
         source_path: String,
     ) -> std::thread::JoinHandle<()> {
         let mut server = Server;
         Coder::get().lock().unwrap().set_code_path(source_path.clone());
-        if server.init_library(library_path).is_ok() {
+        Coder::get().lock().unwrap().set_library_path(kappa_library.clone());
+        if server.init_library(dynamic_libraries).is_ok() {
             std::thread::spawn(move || {
                 server.run_server(server_port, server_addr).unwrap()
             })
@@ -24,9 +26,9 @@ impl Server {
         }
     }
 
-    pub fn init_library(&mut self, library_path: String) -> Result<(), String> {
-        match LibraryManager::get().lock().unwrap().load_library(&library_path) {
-            Ok(_) => println!("Libraries loaded successfully from {}", library_path),
+    pub fn init_library(&mut self, dynamic_libraries: String) -> Result<(), String> {
+        match LibraryManager::get().lock().unwrap().load_library(&dynamic_libraries) {
+            Ok(_) => println!("Libraries loaded successfully from {}", dynamic_libraries),
             Err(e) => eprintln!("Error loading libraries: {}", e),
         }
         Ok(())
@@ -41,16 +43,20 @@ impl Server {
             Err(e) => return Err(format!("Error initializing tcp receiver: {}", e)),
         }
         println!("kappa_coder server initialized.");
-        let (sender, receiver) = mpsc::sync_channel::<String>(1);
+        let (sender, receiver) = mpsc::sync_channel::<TcpMessage<String>>(1);
         match tcp_receiver.connect("received", sender) {
             Ok(_) => println!("kappa_coder server connected."),
             Err(e) => return Err(format!("Error connecting tcp receiver: {}", e)),
         }
+        let sender = tcp_receiver.get_input::<TcpMessage<String>>("response").unwrap().sender.clone();
         std::thread::spawn (move || {
             tcp_receiver.run()
         });
+        
         loop {
-            let mut command = receiver.recv().unwrap();
+            let command = receiver.recv().unwrap();
+            let id_stream = command.id_stream;
+            let mut command = command.message;
             command = command
             .chars()
             .filter(|c| {
@@ -58,8 +64,23 @@ impl Server {
             })
             .collect();
             //print!("Received {}", command);
-            Parser::parse_command(command.clone())?;
-            
+            let answer: TcpMessage<String>;
+            match Parser::parse_command(command.clone()) {
+                
+                Ok(_) => {
+                    answer = TcpMessage {
+                        id_stream,
+                        message: format!("Ok\n"),
+                    }
+                },
+                Err(e) => {
+                    answer = TcpMessage {
+                        id_stream,
+                        message: format!("Error: {}\n", e),
+                    }
+                }
+            }
+            sender.send(answer).unwrap();            
         }
         println!("kappa_coder server stopped.");
         Ok(())

@@ -15,8 +15,8 @@ impl MemoryObject {
         &self.object_type
     }
 }
-
-type ParserFunction = fn(&mut Parser, Vec<String>) -> Result<(), String>;
+type ParserFunctionReturn = Result<(), String>;
+type ParserFunction = fn(&mut Parser, Vec<String>) -> ParserFunctionReturn;
 
 pub struct Parser {
     pub commands: HashMap<String, ParserFunction>,
@@ -58,7 +58,17 @@ impl Parser {
     pub fn get() -> &'static Mutex<Parser> {
         PARSER.get_or_init(|| Mutex::new(Parser::new()))
     }
-    fn parse_create_crate(&mut self, name: &String) -> Result<(), String> {
+    fn check_var(&self, name: &str, _type: &str) -> ParserFunctionReturn {
+        if !self.memory_objects.contains_key(name) {
+            return Err(format!("Object {} does not exist.", name));
+        }
+        let (_, value) = self.memory_objects.get_key_value(name).unwrap();
+        if value.object_type != _type {
+            return Err(format!("Object is not type {}", _type));
+        }
+        Ok(())
+    }
+    fn parse_create_crate(&mut self, name: &String) -> ParserFunctionReturn {
         println!("Creating crate with name {}", name);
         let new_object = MemoryObject {
             parent: "root".to_string(),
@@ -75,18 +85,32 @@ impl Parser {
         };
         self.memory_objects.insert(name.to_string(), new_object);
     }
-    fn parse_create_processor(&mut self, name: &String, args: &Vec<String>) -> Result<(), String> {
-        let mut parent_name = "root";
-        if Some(&"in".to_string()) == args.get(2) {
-            parent_name = args.get(3).ok_or("Missing parent name argument.".to_string())?;
-            if !self.memory_objects.contains_key(parent_name) {
-                return Err(format!("Parent object {} does not exist.", parent_name));
-            }
-            let (_, value) = self.memory_objects.get_key_value(parent_name).unwrap();
-            if value.object_type != "crate" || value.object_type != "task" {
-                return Err(format!("Processor can be added only to task or library"));
-            }
+    fn parse_create_processor_block(&mut self, name: &String, args: &Vec<String>) -> ParserFunctionReturn {
+        if Some(&"in".to_string()) != args.get(2) {
+            return Err("Expected 'in' keyword.".to_string());
         }
+        let parent_name = args.get(3).ok_or("Missing parent name argument.".to_string())?;
+        self.check_var(parent_name, "crate")?;
+        println!("Creating processor block with name {} in parent {}", name, parent_name);
+        let new_object = MemoryObject {
+            parent: parent_name.to_string(),
+            object_type: "processor_block".to_string(),
+        };
+        self.memory_objects.insert(name.to_string(), new_object);
+        Ok(())
+    }
+    fn parse_create_processor(&mut self, name: &String, args: &Vec<String>) -> ParserFunctionReturn {
+        if args.get(2) != Some(&"type".to_string()) {
+            return Err("Expected 'type' keyword.".to_string());
+        }
+        let type_name = args.get(3).ok_or("Missing type name argument.".to_string())?;
+        self.typed.insert(name.to_string(), type_name.to_string());
+        if Some(&"in".to_string()) != args.get(4) {
+            return Err("Expected 'type' keyword.".to_string());
+        }
+        let parent_name = args.get(5).ok_or("Missing parent name argument.".to_string())?;
+        self.check_var(parent_name, "task")?;
+
         println!("Creating processor with name {} in parent {}", name, parent_name);
         let new_object = MemoryObject {
             parent: parent_name.to_string(),
@@ -95,7 +119,7 @@ impl Parser {
         self.memory_objects.insert(name.to_string(), new_object);
         Ok(())
     }
-    pub fn parse_create_code(&mut self, name: &String, args: &Vec<String>) -> Result<(), String> {
+    pub fn parse_create_code(&mut self, name: &String, args: &Vec<String>) -> ParserFunctionReturn {
         if args.get(1) != Some(&"in".to_string()) {
             return Err("Missing in keyword".to_string());
         }
@@ -115,38 +139,26 @@ impl Parser {
         self.memory_objects.insert(name.to_string(), new_object);
         Ok(())
     }
-    fn parse_create_typed(&mut self, name: &String, args: &Vec<String>, _type: &String) -> Result<(), String> {
+    fn parse_create_typed(&mut self, name: &String, args: &Vec<String>, _type: &String) -> ParserFunctionReturn {
         if args.get(2) != Some(&"type".to_string()) {
             return Err("Expected 'type' keyword.".to_string());
         }
         let type_name = args.get(3).ok_or("Missing type name argument.".to_string())?;
         self.typed.insert(name.to_string(), type_name.to_string());
-        if args.get(4) == Some(&"in".to_string()) {
-            let parent_name = args.get(5).ok_or("Missing parent name argument.".to_string())?;
-            if !self.memory_objects.contains_key(parent_name) {
-                return Err(format!("Parent object {} does not exist.", parent_name));
-            }
-            let (_, value) = self.memory_objects.get_key_value(parent_name).unwrap();
-            if value.object_type != "processor" {
-                return Err(format!("Cannot add {} to non-processor object {}.", _type, parent_name));
-            }
-            println!("Creating {} with name {} of type {} in parent {}", _type, name, type_name, parent_name);
-            let new_object = MemoryObject {
-                parent: parent_name.to_string(),
-                object_type: _type.to_string(),
-            };
-            self.memory_objects.insert(name.to_string(), new_object);
-        } else {
-            println!("Creating {} with name {} of type {} with no parent", _type, name, type_name);
-            let new_object = MemoryObject {
-                parent: "root".to_string(),
-                object_type: _type.to_string(),
-            };
-            self.memory_objects.insert(name.to_string(), new_object);
+        if args.get(4) != Some(&"in".to_string()) {
+            return Err("Expected 'in' keyword.".to_string());
         }
+        let parent_name = args.get(5).ok_or("Missing parent name argument.".to_string())?;
+        self.check_var(parent_name, "processor_block")?;
+        println!("Creating {} with name {} of type {} with no parent", _type, name, type_name);
+        let new_object = MemoryObject {
+            parent: parent_name.to_string(),
+            object_type: _type.to_string(),
+        };
+        self.memory_objects.insert(name.to_string(), new_object);
         Ok(())
     }
-    pub fn parse_create_settable(&mut self, name: &String, args: &Vec<String>, _type: &String) -> Result<(), String> {
+    pub fn parse_create_settable(&mut self, name: &String, args: &Vec<String>, _type: &String) -> ParserFunctionReturn {
         if args.get(2) != Some(&"type".to_string()) {
             return Err("Expected 'type' keyword.".to_string());
         }
@@ -157,32 +169,20 @@ impl Parser {
         }
         let default_value = args.get(5).ok_or("Missing default value argument.".to_string())?;
         self.settable.insert(name.to_string(), default_value.to_string());
-        if args.get(6) == Some(&"in".to_string()) {
-            let parent_name = args.get(7).ok_or("Missing parent name argument.".to_string())?;
-            if !self.memory_objects.contains_key(parent_name) {
-                return Err(format!("Parent object {} does not exist.", parent_name));
-            }
-            let (_, value) = self.memory_objects.get_key_value(parent_name).unwrap();
-            if value.object_type != "processor" {
-                return Err(format!("Cannot add {} to non-processor object {}.", _type, parent_name));
-            }
-            println!("Creating {} with name {} of type {} with default {} in parent {}", _type, name, type_name, default_value, parent_name);
-            let new_object = MemoryObject {
-                parent: parent_name.to_string(),
-                object_type: _type.to_string(),
-            };
-            self.memory_objects.insert(name.to_string(), new_object);
-        } else {
-            println!("Creating {} with name {} of type {} with default {} with no parent", _type, name, type_name, default_value);
-            let new_object = MemoryObject {
-                parent: "root".to_string(),
-                object_type: _type.to_string(),
-            };
-            self.memory_objects.insert(name.to_string(), new_object);
+        if args.get(6) != Some(&"in".to_string()) {
+            return Err("Expected 'in' keyword.".to_string());
         }
+        let parent_name = args.get(7).ok_or("Missing parent name argument.".to_string())?;
+        self.check_var(parent_name, "processor_block")?;
+        println!("Creating {} with name {} of type {} with default {} in parent {}", _type, name, type_name, default_value, parent_name);
+        let new_object = MemoryObject {
+            parent: parent_name.to_string(),
+            object_type: _type.to_string(),
+        };
+        self.memory_objects.insert(name.to_string(), new_object);
         Ok(())
     }
-    pub fn parse_create(&mut self, args: Vec<String>) -> Result<(), String> {
+    pub fn parse_create(&mut self, args: Vec<String>) -> ParserFunctionReturn {
         // Implement create command parsing logic here
         if self.types.contains(&args[0]) {
             let _type = args.get(0).ok_or("Missing type argument.".to_string())?;
@@ -198,8 +198,13 @@ impl Parser {
                     self.parse_create_crate(name)?;
                 }
                 "task" => {
+                     if args.len() > 2 {
+                        return Err("Invalid argument for task creation".to_string());
+                    }
                     self.parse_create_task(name);
-                    return Err("Task creation not implemented yet.".to_string());
+                }
+                "processor_block" => {
+                    self.parse_create_processor_block(name, &args)?;
                 }
                 "processor" => {
                     self.parse_create_processor(name, &args)?;
@@ -223,7 +228,7 @@ impl Parser {
         }
         Ok(())
     }
-    pub fn parse_add(&mut self, args: Vec<String>) -> Result<(), String> {
+    pub fn parse_add(&mut self, args: Vec<String>) -> ParserFunctionReturn {
         let name = args.get(0).ok_or("Missing name argument.".to_string())?;
         if !self.memory_objects.contains_key(name) {
             return Err(format!("Object with name {} does not exists.", name));
@@ -233,24 +238,19 @@ impl Parser {
             return Err("Expected 'in' keyword.".to_string());
         }
         let parent_name = args.get(2).ok_or("Missing parent name argument.".to_string())?;
-        if !self.memory_objects.contains_key(parent_name) {
-            return Err(format!("Parent object {} does not exist.", parent_name));
-        }
-        let (_, value) = self.memory_objects.get_key_value(parent_name).unwrap();
         let (_, child_value) = self.memory_objects.get_key_value(name).unwrap();
         match child_value.object_type.as_str() {
             "input" | "output" | "parameter" | "static" | "state" => {
-                if value.object_type != "processor" {
-                    return Err(format!("Cannot add {} to non-processor object {}.", child_value.object_type, parent_name));
-                }
+                self.check_var(parent_name, "processor_block")?;
+            }
+            "processor_block" => {
+                self.check_var(parent_name, "crate")?;
             }
             "processor" => {
-                if value.object_type != "crate" {
-                    return Err(format!("Cannot add processor to non-crate object {}.", parent_name));
-                }
+                self.check_var(parent_name, "task")?;
             }
-            "crate" => {
-                return Err("Cannot add crate inside another object.".to_string());
+            "crate" | "task" => {
+                return Err(format!("Cannot add {} inside another object.",child_value.object_type));
             }
             _ => {}
         }
@@ -262,13 +262,15 @@ impl Parser {
         self.memory_objects.insert(name.to_string(), updated_object);
         Ok(())
     }
-    pub fn parse_delete(&mut self, args: Vec<String>) -> Result<(), String> {
+    pub fn parse_delete(&mut self, args: Vec<String>) -> ParserFunctionReturn {
         let name = args.get(0).ok_or("Missing name argument.".to_string())?;
         if !self.memory_objects.contains_key(name) {
             return Err(format!("Object with name {} does not exists.", name));
         }
         let (_, value) = self.memory_objects.get_key_value(name).unwrap();
-        if value.object_type == "crate" || value.object_type == "processor" {
+        if value.object_type == "crate" || 
+            value.object_type == "task" || 
+            value.object_type == "processor_block" {
             let children: Vec<String> = self.memory_objects.iter()
                 .filter(|(_, obj)| obj.parent == *name)
                 .map(|(k, _)| k.clone())
@@ -281,49 +283,33 @@ impl Parser {
         self.memory_objects.remove(name);
         Ok(())
     }
-    pub fn parse_connect(&mut self, args: Vec<String>) -> Result<(), String> {
+    pub fn parse_connect(&mut self, args: Vec<String>) -> ParserFunctionReturn {
         let name = args.get(0).ok_or("Missing name argument.".to_string())?;
-        if !self.memory_objects.contains_key(name) {
-            return Err(format!("Object with name {} does not exists.", name));
-        }
-        let (_, value) = self.memory_objects.get_key_value(name).unwrap();
-        if value.object_type != "output" {
-            return Err(format!("Object {} is not an output.", name));
-        }
+        self.check_var(name, "output")?;
         let to_flag = args.get(1).ok_or("Missing 'to' argument.".to_string())?;
         if to_flag != "to" {
             return Err("Expected 'to' keyword.".to_string());
         }
         let target_name = args.get(2).ok_or("Missing target name argument.".to_string())?;
-        if !self.memory_objects.contains_key(target_name) {
-            return Err(format!("Target object {} does not exist.", target_name));
-        }
-        let (_, target_value) = self.memory_objects.get_key_value(target_name).unwrap();
-        if target_value.object_type != "input" {
-            return Err(format!("Target object {} is not an input.", target_name));
-        }
+        self.check_var(target_name, "input")?;
         println!("Connecting output {} to input {}", name, target_name);
         self.connections_list.push((name.to_string(), target_name.to_string()));
         Ok(())
     }
-    pub fn parse_set(&mut self, args: Vec<String>) -> Result<(), String> {
+    pub fn parse_set(&mut self, args: Vec<String>) -> ParserFunctionReturn {
         let name = args.get(0).ok_or("Missing name argument.".to_string())?;
-        if !self.memory_objects.contains_key(name) {
-            return Err(format!("Object with name {} does not exists.", name));
-        }
-        let (_, value) = self.memory_objects.get_key_value(name).unwrap();
-        if value.object_type != "parameter" && value.object_type != "static" {
-            return Err(format!("Object {} is not an settable.", name));
+        if self.check_var(name, "parameter").is_err() {
+            self.check_var(name, "static")?;
         }
         println!("Setting {} to value {}", name, args[1]);
         self.settable.insert(name.to_string(), args[1].clone());
         Ok(())
     }
-    pub fn parse_build(&mut self, args: Vec<String>) -> Result<(), String> {
+    pub fn parse_build(&mut self, _args: Vec<String>) -> ParserFunctionReturn {
         // Implement set command parsing logic here
         Ok(())
     }
-    pub fn parse_command(data: String) -> Result<(), String> {
+    pub fn parse_command(data: String) -> ParserFunctionReturn {
         let parts: Vec<String> = data
             .split(';')
             .map(|s| s.trim().to_string())
