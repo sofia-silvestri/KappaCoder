@@ -5,6 +5,7 @@ use std::path::Path;
 use coder::coder::Coder;
 use coder::processor_coder::ModCoderParts;
 use coder::main_coder::MainCoderParts;
+use coder::coder::BuildType;
 
 pub struct MemoryObject {
     parent: String,
@@ -97,7 +98,7 @@ impl Parser {
             return Err(format!("Expected metadata keyword."));
         }
         let metadata = tokens.get(6).ok_or_else(|| "Missing metadata value".to_string())?;
-        let mut coder = Coder::new(crate_path.clone(), self.library_path.clone());
+        let mut coder = Coder::new(crate_path.clone(), self.library_path.clone(), BuildType::Library);
         coder.create_crate(crate_name, metadata)?;
         let memory_object = MemoryObject {
             parent: "".to_string(),
@@ -201,7 +202,7 @@ impl Parser {
             return Err(format!("Expected path keyword."));
         }
         let crate_path = tokens.get(4).ok_or_else(|| "Missing crate path".to_string())?;
-        let mut coder = Coder::new(crate_path.clone(), self.library_path.clone());
+        let mut coder = Coder::new(crate_path.clone(), self.library_path.clone(), BuildType::Application);
         coder.create_application(application_name)?;
         let memory_object = MemoryObject {
             parent: "".to_string(),

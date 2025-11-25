@@ -12,10 +12,11 @@ enum LibCoderParts {
 pub struct LibCoder {
     modules: Vec<String>,
     module_structs: ModuleStruct,
+    path: String,
 }
 
 impl LibCoder {
-    pub fn new() -> Self {
+    pub fn new(path: String) -> Self {
         LibCoder {
             modules: Vec::new(),
             module_structs: ModuleStruct {
@@ -27,6 +28,7 @@ impl LibCoder {
                 dependencies: Vec::new(),
                 provides: Vec::new(),
             },
+            path,
         }
     }
     pub fn add_module(&mut self, module_name: String) {
@@ -105,7 +107,7 @@ impl LibCoder {
         code_lines.push(format!("}}"));
         code_lines.join("\n")
     }
-    pub fn generate_lib_code(&self) -> String {
+    pub fn generate(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
         code_lines.push(self.add_module_section());
         code_lines.push(self.add_module_struct_section());

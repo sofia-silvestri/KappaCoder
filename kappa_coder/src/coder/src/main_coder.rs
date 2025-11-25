@@ -1,40 +1,75 @@
 use std::collections::HashMap;
 
-enum MainCoderParts {
+#[repr(u8)]
+pub enum MainCoderParts {
     HeadMain,
     UsedDefinedCode,
     StreamProcessorCreation,
     StreamProcessorSetup,
     StreamProcessorConnection,
+    StreamProcessorUserCode,
     StreamInit,
     StreamRun,
     StreamStop,
 }
 
+impl TryFrom<u8> for MainCoderParts {
+    type Error = ();
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(MainCoderParts::HeadMain),
+            1 => Ok(MainCoderParts::UsedDefinedCode),
+            2 => Ok(MainCoderParts::StreamProcessorCreation),
+            3 => Ok(MainCoderParts::StreamProcessorSetup),
+            4 => Ok(MainCoderParts::StreamProcessorConnection),
+            5 => Ok(MainCoderParts::StreamProcessorUserCode),
+            6 => Ok(MainCoderParts::StreamInit),
+            7 => Ok(MainCoderParts::StreamRun),
+            8 => Ok(MainCoderParts::StreamStop),
+            _ => Err(()),
+        }
+    }
+}
+impl TryFrom<String> for MainCoderParts {
+    type Error = ();
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let num_result: Result<u8, _> = value.parse();
+        let int_code: u8 = match num_result {
+            Ok(n) => n,
+            Err(_) => {return Err(());},
+        };
+        Self::try_from(int_code)
+    }
+}
+
+#[derive(Clone)]
 pub struct Connections {
     from_processor: String,
     from_output: String,
     to_processor: String,
     to_input: String,
 }
-
+#[derive(Clone)]
 pub struct Settings {
     processor_name: String,
     settable_type: String,
     settable_name: String,
     value: String,
 }
+#[derive(Clone)]
 pub struct MainCoder {
     stream_proc: HashMap<String, String>,
     connections: Vec<Connections>,
     settings: Vec<Settings>,
+    path: String,
 }
 impl MainCoder {
-    pub fn new() -> Self {
+    pub fn new(path: String) -> Self {
         MainCoder {
             stream_proc: HashMap::new(),
             connections: Vec::new(),
             settings: Vec::new(),
+            path,
         }
     }
     pub fn add_stream_processor(&mut self, proc_name: String, proc_type: String) {
@@ -111,12 +146,11 @@ impl MainCoder {
         code_lines.join("\n")
     }
 
-    pub fn create_main_rs_file(&self, user_defined_code: Vec<String>) -> String {
+    pub fn generate(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
         code_lines.push("// Auto-generated main.rs file".to_string());
         code_lines.push(self.create_file_head_block());
         code_lines.push("// User-defined code section".to_string());
-        code_lines.extend(user_defined_code);
         code_lines.push(self.create_stream_processor_creation_block());
         code_lines.push(self.create_stream_processor_setup_block());
         code_lines.push(self.create_stream_processor_connection_block());
