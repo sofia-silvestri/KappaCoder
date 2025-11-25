@@ -44,20 +44,28 @@ impl TryFrom<String> for MainCoderParts {
 
 #[derive(Clone)]
 pub struct Connections {
-    from_processor: String,
-    from_output: String,
-    to_processor: String,
-    to_input: String,
+    pub from_processor: String,
+    pub from_output: String,
+    pub to_processor: String,
+    pub to_input: String,
 }
 #[derive(Clone)]
 pub struct Settings {
-    processor_name: String,
-    settable_type: String,
-    settable_name: String,
-    value: String,
+    pub processor_name: String,
+    pub settable_type: String,
+    pub settable_name: String,
+    pub value: String,
 }
+
+#[derive(Clone)]
+pub struct TaskProcessor {
+    pub name: String,
+    pub stream_processors: Vec<String>,
+}
+
 #[derive(Clone)]
 pub struct MainCoder {
+    task_proc: HashMap<String, TaskProcessor>,
     stream_proc: HashMap<String, String>,
     connections: Vec<Connections>,
     settings: Vec<Settings>,
@@ -66,14 +74,25 @@ pub struct MainCoder {
 impl MainCoder {
     pub fn new(path: String) -> Self {
         MainCoder {
+            task_proc: HashMap::new(),
             stream_proc: HashMap::new(),
             connections: Vec::new(),
             settings: Vec::new(),
             path,
         }
     }
+    pub fn add_task_processor(&mut self, task_name: String) {
+        self.task_proc.insert(task_name.clone(), TaskProcessor {
+            name: task_name.clone(),
+            stream_processors: Vec::new(),
+        });
+    }
     pub fn add_stream_processor(&mut self, proc_name: String, proc_type: String) {
-        self.stream_proc.insert(proc_name, proc_type);
+        let split_name: Vec<&str> = proc_name.split(".").collect();
+        let task_name = split_name[0].to_string();
+        let stream_proc_name = split_name[1].to_string();
+        let mut task_proc = self.task_proc.get_mut(&task_name).unwrap();
+        task_proc.stream_processors.push(stream_proc_name);
     }
     pub fn add_connection(&mut self, from_proc: String, from_output: String, to_proc: String, to_input: String) {
         self.connections.push(Connections {
@@ -84,18 +103,17 @@ impl MainCoder {
         });
     }
     pub fn add_setting_value(&mut self, proc_name: String, settable_type: String, settable_name: String, value: String) {
-        if let Some(blocks) = self.stream_proc.get_mut(&proc_name) {
-            self.settings.push(Settings {
-                processor_name: proc_name,
-                settable_type,
-                settable_name,
-                value,
-            });
-        }
+        self.settings.push(Settings {
+            processor_name: proc_name,
+            settable_type,
+            settable_name,
+            value,
+        });
     }
     fn create_file_head_block(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
-        code_lines.join("\n")
+        code_lines.join("\n");
+        todo!();
     }
 
     fn create_stream_processor_creation_block(&self) -> String {
@@ -127,7 +145,8 @@ impl MainCoder {
             code_lines.push(format!("let sender = {}.get_input::<_>(\"{}\").unwrap().sender;", connection.to_processor, connection.to_input));
             code_lines.push(format!("{}.connect::<_>({}, sender).unwrap();", connection.from_processor, connection.from_output));
         }
-        code_lines.join("\n")
+        code_lines.join("\n");
+        todo!();
     }
 
     fn create_stream_init_block(&self) -> String {
@@ -137,8 +156,12 @@ impl MainCoder {
     }
     fn create_stream_run_block(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
-        // TODO: Add thread spawning 
-        code_lines.join("\n")
+        for task in self.task_proc.values() {
+            // TODO: Add thread spawning 
+            code_lines.push(format!(""));
+        }
+        code_lines.join("\n");
+        todo!();
     }
     fn create_stream_stop_block(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();

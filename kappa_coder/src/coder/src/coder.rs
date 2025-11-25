@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::path::Path;
 use std::io::Write;
-use std::fs;
 use std::process::Command;
 use crate::lib_coder::LibCoder;
 use crate::processor_coder::{ProcessorCoder, ModCoderParts};
@@ -115,7 +114,7 @@ impl Coder {
         };
         lib_coder.add_module(processor_name.to_string());
         lib_coder.generate();
-        let processor_coder = ProcessorCoder::new(processor_path.clone());
+        let mut processor_coder = ProcessorCoder::new(processor_path.clone());
         processor_coder.generate();
         self.module_coders.insert(block_name.clone(), processor_coder.clone());
         Ok(())
@@ -145,7 +144,7 @@ impl Coder {
             },
         };
         processor_coder.add_settable(object_kind, object_name, object_type, object_default, object_limits);
-        processor_coder.generate();
+        processor_coder.generate()?;
         Ok(())
     }
     pub fn create_application(&mut self, application_name: &String) -> CoderFunctionReturn {
@@ -165,36 +164,28 @@ impl Coder {
         Ok(())
     }
     pub fn create_task(&mut self, task_name: &String) -> CoderFunctionReturn {
-        
-        Ok(())
+        todo!();
     }
     pub fn create_processor(&mut self, processor_name: &String, processor_code: &String, processor_type: &String) -> CoderFunctionReturn {
-        
-        Ok(())
+        todo!();
     }
     pub fn delete_object(&mut self, object_name: &String) -> CoderFunctionReturn {
-        
-        Ok(())
+        todo!();
     }
     pub fn connect(&mut self, source_name: &String, target_name: &String) -> CoderFunctionReturn {
-        
-        Ok(())
+        todo!();
     }
     pub fn set_value(&mut self, object_type: &String, object_name: &String, value: &String) -> CoderFunctionReturn {
-        
-        Ok(())
+        todo!();
     }
     pub fn create_processor_code(&mut self, processor_name: &String, code_id: ModCoderParts, code: &String) -> CoderFunctionReturn {
-        
-        Ok(())
+        todo!();
     }
     pub fn create_application_code(&mut self, processor_name: &String, code_id: MainCoderParts, code: &String) -> CoderFunctionReturn {
-        
-        Ok(())
+        todo!();
     }
     pub fn build(&mut self, build_object_name: &String, build_type: &String) -> CoderFunctionReturn {
-
-        Ok(())
+        todo!();
     }
 }
     
