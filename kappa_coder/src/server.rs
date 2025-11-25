@@ -3,7 +3,6 @@ use crate::library_manager::LibraryManager;
 use processor_engine::stream_processor::{StreamProcessor, StreamBlock};
 use interfaces::tcp_interface::{TcpReceiver, TcpMessage};
 use crate::parser::Parser;
-use coder::coder::Coder;
 pub struct Server;
 
 impl Server {
@@ -12,11 +11,9 @@ impl Server {
         server_port: u16,
         dynamic_libraries: String,
         kappa_library: String,
-        source_path: String,
     ) -> Result<std::thread::JoinHandle<()>, String> {
         let mut server = Server;
-        Coder::get().lock().unwrap().set_code_path(source_path.clone())?;
-        Coder::get().lock().unwrap().set_library_path(kappa_library.clone())?;
+        Parser::get().lock().unwrap().set_library_path(kappa_library.clone())?;
         if server.init_library(dynamic_libraries).is_ok() {
             Ok(std::thread::spawn(move || {
                 server.run_server(server_port, server_addr).unwrap()
