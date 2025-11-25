@@ -65,7 +65,7 @@ impl Server {
             .collect();
             //print!("Received {}", command);
             let answer: TcpMessage<String>;
-            match Parser::parse_command(command.clone()) {
+            match Parser::get().lock().unwrap().parse_command(command.clone()) {
                 
                 Ok(_) => {
                     answer = TcpMessage {
