@@ -34,14 +34,17 @@ impl LibCoder {
     pub fn add_module(&mut self, module_name: String) {
         self.modules.push(module_name);
     }
-    fn add_module_section(&self) -> String {
+    pub fn delete_object(&mut self, object_name: &String) {
+        self.modules.retain(|m| m != object_name);
+    }
+    fn generate_module_section(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
         for module in self.modules.iter() {
             code_lines.push(format!("pub mod {};", module));
         }
         code_lines.join("\n")
     }
-    fn add_module_struct_section(&self) -> String {
+    fn generate_module_struct_section(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
         code_lines.push(format!("use std::ffi::c_char;"));
         code_lines.push(format!("use data_model::modules::{{Version,ModuleStructFFI}};"));
@@ -69,7 +72,7 @@ impl LibCoder {
         code_lines.push(format!("}};"));
         code_lines.join("\n")
     }
-    fn add_start_get_module_section(&self) -> String {
+    fn generate_start_get_module_section(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
         code_lines.push(format!("#[unsafe(no_mangle)]"));
         code_lines.push(format!("pub extern \"C\" fn get_processor_modules(proc_block: *const u8, "));
@@ -87,7 +90,7 @@ impl LibCoder {
         code_lines.join("\n")
     }
 
-    fn add_body_get_module_section(&self) -> String {
+    fn generate_body_get_module_section(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
         for module in self.modules.iter() {
             code_lines.push(format!("        \"{}\" => {{", module));
@@ -98,7 +101,7 @@ impl LibCoder {
         code_lines.join("\n")
     }
 
-    fn add_end_get_module_section(&self) -> String {
+    fn generate_end_get_module_section(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
         code_lines.push(format!("        _ => {{"));
         code_lines.push(format!("            eprintln!(\"Processor block {{}} not found\", proc_block_str);"));
@@ -107,13 +110,14 @@ impl LibCoder {
         code_lines.push(format!("}}"));
         code_lines.join("\n")
     }
-    pub fn generate(&self) -> String {
+    pub fn generate(&self) -> Result<(), String> {
         let mut code_lines: Vec<String> = Vec::new();
-        code_lines.push(self.add_module_section());
-        code_lines.push(self.add_module_struct_section());
-        code_lines.push(self.add_start_get_module_section());
-        code_lines.push(self.add_body_get_module_section());
-        code_lines.push(self.add_end_get_module_section());
-        code_lines.join("\n")
+        code_lines.push(self.generate_module_section());
+        code_lines.push(self.generate_module_struct_section());
+        code_lines.push(self.generate_start_get_module_section());
+        code_lines.push(self.generate_body_get_module_section());
+        code_lines.push(self.generate_end_get_module_section());
+        code_lines.join("\n");
+        Ok(())
     }
 }

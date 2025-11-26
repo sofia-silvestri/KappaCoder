@@ -293,12 +293,19 @@ impl Parser {
     }
     fn parse_delete(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
         let object_name = tokens.get(1).ok_or_else(|| "Missing object name".to_string())?;
+        let split_name = object_name.split(".").collect::<Vec<&str>>();
+        if split_name.len() == 0 {
+            return Err(format!("Invalid object name."));
+        }
         if !self.object_map.contains_key(object_name) {
             return Err(format!("Object {} does not exist.", object_name));
         }
         self.delete(object_name.clone());
-        let mut coder = self.object_map.get(&object_name.to_string()).unwrap().coder.clone();
-        coder.delete_object(&object_name)?;
+        if split_name.len() > 1 {
+            // Application or Crate deletion
+            let mut coder = self.object_map.get(&object_name.to_string()).unwrap().coder.clone();
+            coder.delete_object(&object_name)?;
+        }
         Ok(())
     }
     fn parse_connect(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
@@ -306,8 +313,6 @@ impl Parser {
         let target_name = tokens.get(2).ok_or_else(|| "Missing target name".to_string())?;
         self.check_var(source_name, &"output".to_string())?;
         self.check_var(target_name, &"input".to_string())?;
-        let mut coder = self.object_map.get(&source_name.to_string()).unwrap().coder.clone();
-        coder.connect(source_name, target_name)?;
         Ok(())
     }
     fn parse_set(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
@@ -342,7 +347,7 @@ impl Parser {
                             .map_err(|_| format!("Invalid application code part: {}", code_string))?;
                         let code = tokens.get(3).ok_or_else(|| "Missing application code".to_string())?;
                         let mut coder = self.object_map.get(&object_name.to_string()).unwrap().coder.clone();
-                        coder.create_application_code(object_name, code_id, code)?;
+                        coder.create_application_code(code_id, code)?;
                     },
                     Err(_) => {return Err(format!("Object {} does not allow user code.", object_name));},
                 }

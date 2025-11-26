@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 #[repr(u8)]
+#[derive(PartialEq, Eq, Hash, Clone)]
 pub enum MainCoderParts {
     HeadMain,
     UsedDefinedCode,
@@ -69,6 +70,7 @@ pub struct MainCoder {
     stream_proc: HashMap<String, String>,
     connections: Vec<Connections>,
     settings: Vec<Settings>,
+    user_codes: HashMap<MainCoderParts, String>,
     path: String,
 }
 impl MainCoder {
@@ -78,6 +80,7 @@ impl MainCoder {
             stream_proc: HashMap::new(),
             connections: Vec::new(),
             settings: Vec::new(),
+            user_codes: HashMap::new(),
             path,
         }
     }
@@ -109,6 +112,20 @@ impl MainCoder {
             settable_name,
             value,
         });
+    }
+    pub fn add_code_section(&mut self, part: MainCoderParts, code: String) {
+        self.user_codes.insert(part, code);
+    }
+    pub fn delete_object(&mut self, object_name: &String) {
+        let split_name: Vec<&str> = object_name.split(".").collect();
+        if split_name.len() == 2 {
+            self.task_proc.retain(|k, _| k != object_name);
+        } else if split_name.len() == 3 {
+            let task_name = format!("{}.{}", split_name[0], split_name[1]);
+            if let Some(task_proc) = self.task_proc.get_mut(&task_name) {
+                task_proc.stream_processors.retain(|sp| sp != split_name[2]);
+            }
+        }
     }
     fn create_file_head_block(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
@@ -143,10 +160,9 @@ impl MainCoder {
         let mut code_lines: Vec<String> = Vec::new();
         for connection in self.connections.iter() {
             code_lines.push(format!("let sender = {}.get_input::<_>(\"{}\").unwrap().sender;", connection.to_processor, connection.to_input));
-            code_lines.push(format!("{}.connect::<_>({}, sender).unwrap();", connection.from_processor, connection.from_output));
+            code_lines.push(format!("{}.connect::<_>(\"{}\", sender).unwrap();", connection.from_processor, connection.from_output));
         }
-        code_lines.join("\n");
-        todo!();
+        code_lines.join("\n")
     }
 
     fn create_stream_init_block(&self) -> String {
@@ -169,7 +185,7 @@ impl MainCoder {
         code_lines.join("\n")
     }
 
-    pub fn generate(&self) -> String {
+    pub fn generate(&self) -> Result<(), String> {
         let mut code_lines: Vec<String> = Vec::new();
         code_lines.push("// Auto-generated main.rs file".to_string());
         code_lines.push(self.create_file_head_block());
@@ -180,7 +196,8 @@ impl MainCoder {
         code_lines.push(self.create_stream_init_block());
         code_lines.push(self.create_stream_run_block());
         code_lines.push(self.create_stream_stop_block());
-        code_lines.join("\n")
+        code_lines.join("\n");
+        Ok(())
     }
 }
 
