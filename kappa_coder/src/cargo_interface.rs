@@ -43,7 +43,11 @@ impl CargoInterface {
         if std::env::set_current_dir(&path).is_err() {
             return Err(format!("Something went wrong in crate creation"));
         }
-        Command::new(&self.cargo_path).arg("build").arg(format!("--{}", build_type)).status().expect("Failed to build the project");
+        if build_type == "debug" {
+            Command::new(&self.cargo_path).arg("build").status().expect("Failed to build the project");
+        } else {
+            Command::new(&self.cargo_path).arg("build").arg(format!("--{}", build_type)).status().expect("Failed to build the project");
+        }
         let res = std::env::set_current_dir(curr_dir);
         match res {
             Ok(_) => (),

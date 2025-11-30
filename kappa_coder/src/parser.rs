@@ -176,8 +176,7 @@ impl Parser {
         let mut object_map: HashMap<String, MemoryObject> = HashMap::new();
         object_map.insert(crate_name.clone(), memory_object);
         self.projects_map.insert(crate_name.clone(), object_map);
-        let path = format!("{}/src/lib.rs", crate_path);
-        let mut lib_coder = LibCoder::new(path.clone());
+        let mut lib_coder = LibCoder::new(crate_path.clone());
         lib_coder.generate()?;
         self.coder_map.insert(crate_name.clone(), Box::new(lib_coder));
         Ok(())
@@ -211,7 +210,7 @@ impl Parser {
             },
             None => return Err(format!("Coder for crate {} not found.", split_name[0])),
         }
-        let block_coder_path = format!("{}/{}.rs", lib_coder.get_path().rsplitn(2, '/').nth(1).unwrap(), to_snake_case(&split_name[1].to_string()));
+        let block_coder_path = format!("{}/src/{}.rs", lib_coder.get_path(), to_snake_case(&split_name[1].to_string()));
         let mut processor_coder = ProcessorCoder::new(block_coder_path.clone(), split_name[1].to_string());
         processor_coder.generate()?;
         object_map.insert(block_name.clone(), memory_object);        

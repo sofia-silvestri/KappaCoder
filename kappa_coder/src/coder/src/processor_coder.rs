@@ -81,10 +81,34 @@ pub struct ProcessorCoder {
 impl ProcessorCoder {
     pub fn new(path: String, processor_name: String) -> Self {
         let mut user_codes: HashMap<ModCoderParts, String> = HashMap::new();
-        user_codes.insert(ModCoderParts::InitBody,    "        Ok(())".to_string());
-        user_codes.insert(ModCoderParts::RunBody,     "        Ok(())".to_string());
-        user_codes.insert(ModCoderParts::ProcessBody, "        Ok(())".to_string());
-        user_codes.insert(ModCoderParts::StopBody,    "        Ok(())".to_string());
+        user_codes.insert(ModCoderParts::InitBody,    "        
+        if self.check_state(StreamingState::Running) {
+            return Err(StreamingError::InvalidStateTransition)
+        }
+        if !self.is_initialized() {
+            return Err(StreamingError::InvalidStatics)
+        }
+        if self.check_state(StreamingState::Null) {
+            // Initialization code here
+        }
+        self.set_state(StreamingState::Initial);
+        Ok(())".to_string());
+        user_codes.insert(ModCoderParts::RunBody, "
+        if self.check_state(StreamingState::Stopped) {
+            return Err(StreamingError::InvalidStateTransition);
+        }
+        self.set_state(StreamingState::Running);
+
+        // Here main processing loop with process calls
+        while !self.check_state(StreamingState::Stopped) {
+            self.process()?;
+        }
+        Ok(())".to_string());
+        user_codes.insert(ModCoderParts::ProcessBody, "
+        Ok(())".to_string());
+        user_codes.insert(ModCoderParts::StopBody,    "
+        self.set_state(StreamingState::Stopped);
+        Ok(())".to_string());
         ProcessorCoder {
             processor_name,
             inputs: HashMap::new(),

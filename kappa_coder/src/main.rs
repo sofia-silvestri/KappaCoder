@@ -18,7 +18,7 @@ fn main() {
     let mut server_port: u16 = 8080;
     let mut server_addr: String = "0.0.0.0".to_string();
     let mut dynamic_libraries_path: String = format!("{}/libraries", application_path.parent().unwrap().to_str().unwrap());
-    let mut kappa_library_path: String = format!("{}/ksppa_library", application_path.parent().unwrap().to_str().unwrap());
+    let mut kappa_library_path: String = format!("{}/kappa_library", application_path.parent().unwrap().to_str().unwrap());
     for arg in args.into_iter().skip(1) {
         if arg == "help" {
             print_usage();
