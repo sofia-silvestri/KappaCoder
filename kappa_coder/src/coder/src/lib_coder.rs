@@ -1,4 +1,6 @@
+use rand::{Rng, rng, random_range};
 use data_model::modules::{ModuleStruct, Version};
+use crate::coder::{Coder, to_snake_case};
 
 enum LibCoderParts {
     ModulesSection,
@@ -12,7 +14,9 @@ enum LibCoderParts {
 pub struct LibCoder {
     modules: Vec<String>,
     module_structs: ModuleStruct,
-    path: String,
+    crate_path: String,
+    file_path: String,
+    tmp_path: String,
 }
 
 impl LibCoder {
@@ -28,10 +32,20 @@ impl LibCoder {
                 dependencies: Vec::new(),
                 provides: Vec::new(),
             },
-            path,
+            crate_path: path.clone(),
+            file_path: format!("{}/src/lib.rs", path.clone()),
+            tmp_path: "".to_string(),
         }
     }
+
+    pub fn get_path(&self) -> String {
+        self.crate_path.clone()
+    }
+    
     pub fn add_module(&mut self, module_name: String) {
+        for module in self.modules.iter() {
+            println!("Module in LibCoder: {}", module);
+        }
         self.modules.push(module_name);
     }
     pub fn delete_object(&mut self, object_name: &String) {
@@ -40,7 +54,7 @@ impl LibCoder {
     fn generate_module_section(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
         for module in self.modules.iter() {
-            code_lines.push(format!("pub mod {};", module));
+            code_lines.push(format!("pub mod {};", to_snake_case(module)));
         }
         code_lines.join("\n")
     }
@@ -57,18 +71,28 @@ impl LibCoder {
         code_lines.push(format!("    authors: b\"{}\\0\".as_ptr() as *const c_char,", self.module_structs.authors));
         code_lines.push(format!("    release_date: b\"{}\\0\".as_ptr() as *const c_char,", self.module_structs.release_date));
         code_lines.push(format!("    version: Version{{ major: {},minor: {},build: {}}},", self.module_structs.version.major, self.module_structs.version.minor, self.module_structs.version.build));
-        code_lines.push(format!("    dependencies: ["),);
-        for dependency in self.module_structs.dependencies.iter() {
-            code_lines.push(format!("        b\"{}\\0\".as_ptr() as *const c_char,", dependency));
+        if self.module_structs.dependencies.is_empty() {
+            code_lines.push(format!("    dependencies: std::ptr::null(),"));
+            code_lines.push(format!("    dependency_number: 0,"));
+        } else {
+            code_lines.push(format!("    dependencies: ["),);
+            for dependency in self.module_structs.dependencies.iter() {
+                code_lines.push(format!("        b\"{}\\0\".as_ptr() as *const c_char,", dependency));
+            }
+            code_lines.push(format!("    ],"));
+            code_lines.push(format!("    dependency_number: {},", self.module_structs.dependencies.len()));
         }
-        code_lines.push(format!("    ],"));
-        code_lines.push(format!("    dependency_number: {},", self.module_structs.dependencies.len()));
-        code_lines.push(format!("    provides: ["));
-        for provide in self.module_structs.provides.iter() {
-            code_lines.push(format!("        b\"{}\\0\".as_ptr() as *const c_char,", provide));
+        if self.module_structs.provides.is_empty() {
+            code_lines.push(format!("    provides: std::ptr::null(),"));
+            code_lines.push(format!("    provides_lengths: 0,"));
+        } else {
+             code_lines.push(format!("    provides: ["));
+            for provide in self.module_structs.provides.iter() {
+                code_lines.push(format!("        b\"{}\\0\".as_ptr() as *const c_char,", provide));
+            }
+            code_lines.push(format!("    ],"));
+            code_lines.push(format!("    provides_lengths: {},", self.module_structs.provides.len()));
         }
-        code_lines.push(format!("    ],"));
-        code_lines.push(format!("    provides_lengths: {},", self.module_structs.provides.len()));
         code_lines.push(format!("}};"));
         code_lines.join("\n")
     }
@@ -94,7 +118,7 @@ impl LibCoder {
         let mut code_lines: Vec<String> = Vec::new();
         for module in self.modules.iter() {
             code_lines.push(format!("        \"{}\" => {{", module));
-            code_lines.push(format!("            proc = Box::new({}::new(block_name_str));", module));
+            code_lines.push(format!("            proc = Box::new({}::{}::new(block_name_str));", to_snake_case(module), module));
             code_lines.push(format!("            export_stream_processor(proc)"));
             code_lines.push(format!("        }}"));
         }
@@ -107,17 +131,26 @@ impl LibCoder {
         code_lines.push(format!("            eprintln!(\"Processor block {{}} not found\", proc_block_str);"));
         code_lines.push(format!("            get_error_return(1)"));
         code_lines.push(format!("        }}"));
+        code_lines.push(format!("    }}"));
         code_lines.push(format!("}}"));
         code_lines.join("\n")
     }
-    pub fn generate(&self) -> Result<(), String> {
+}
+impl Coder for LibCoder {
+    fn generate(&mut self) -> Result<(), String> {
+        let code_file = self.get_tmp_file();
         let mut code_lines: Vec<String> = Vec::new();
         code_lines.push(self.generate_module_section());
         code_lines.push(self.generate_module_struct_section());
         code_lines.push(self.generate_start_get_module_section());
         code_lines.push(self.generate_body_get_module_section());
         code_lines.push(self.generate_end_get_module_section());
-        code_lines.join("\n");
+        let full_code = code_lines.join("\n");
+        self.file_write(code_file.clone(), full_code)?;
+        std::fs::rename(&code_file.clone(), &self.file_path).map_err(|e| format!("Error renaming temp file to {}: {}", self.file_path, e))?;
         Ok(())
     }
+    fn as_any(&self) -> &dyn std::any::Any {self}
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {self}
 }

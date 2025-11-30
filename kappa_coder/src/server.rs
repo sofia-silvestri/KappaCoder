@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use crate::library_manager::LibraryManager;
 use processor_engine::stream_processor::{StreamProcessor, StreamBlock};
 use interfaces::tcp_interface::{TcpReceiver, TcpMessage};
@@ -45,8 +45,11 @@ impl Server {
             Ok(_) => println!("kappa_coder server connected."),
             Err(e) => return Err(format!("Error connecting tcp receiver: {}", e)),
         }
-        let sender = tcp_receiver.get_input::<TcpMessage<String>>("response").unwrap().sender.clone();
-        std::thread::spawn (move || {
+        let sender_tcp = tcp_receiver.get_input::<TcpMessage<String>>("response").unwrap().sender.clone();
+        let tcp_receiver_handle = Arc::new(Mutex::new(tcp_receiver));
+        let tcp_receiver = Arc::clone(&tcp_receiver_handle);
+        std::thread::spawn ( move || {
+            let mut tcp_receiver = tcp_receiver_handle.lock().unwrap();
             tcp_receiver.run()
         });
         
@@ -60,7 +63,7 @@ impl Server {
                 *c != '\n' && *c != '\r'
             })
             .collect();
-            //print!("Received {}", command);
+            print!("Received {}\n", command);
             let answer: TcpMessage<String>;
             match Parser::get().lock().unwrap().parse_command(command.clone()) {
                 
@@ -68,16 +71,18 @@ impl Server {
                     answer = TcpMessage {
                         id_stream,
                         message: format!("Ok\n"),
-                    }
+                    };
+                    println!("Processed command successfully.\n");
                 },
                 Err(e) => {
                     answer = TcpMessage {
                         id_stream,
                         message: format!("Error: {}\n", e),
-                    }
+                    };
+                    println!("Error processing command: {}\n", e);
                 }
             }
-            sender.send(answer).unwrap();            
+            sender_tcp.send(answer).unwrap();  
         }
     }
 }

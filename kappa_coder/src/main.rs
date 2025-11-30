@@ -1,6 +1,7 @@
 pub mod library_manager;
 pub mod server;
 pub mod parser;
+pub mod cargo_interface;
 
 use std::env;
 

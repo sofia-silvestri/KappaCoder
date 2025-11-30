@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use rand::{Rng, rng, random_range};
+use crate::coder::Coder;
 
 #[derive(Clone, Eq, PartialEq, Hash)]
 #[repr(u8)]
@@ -58,18 +58,19 @@ pub struct Limits {
 }
 #[derive(Clone)]
 pub struct Typed {
-    category: String,
-    name: String,
-    data_type: String,
-    default: String,
-    limits: Option<Limits>,
+    pub category: String,
+    pub name: String,
+    pub data_type: String,
+    pub default: String,
+    pub limits: Option<Limits>,
 }
+
 #[derive(Clone)]
 pub struct ProcessorCoder {
     processor_name: String,
     inputs: HashMap<String, String>,
     outputs: HashMap<String, String>,
-    states: HashMap<String, String>,
+    states: HashMap<String, Typed>,
     statics: HashMap<String, Typed>,
     parameters: HashMap<String, Typed>,
     user_codes: HashMap<ModCoderParts, String>,
@@ -79,6 +80,11 @@ pub struct ProcessorCoder {
 
 impl ProcessorCoder {
     pub fn new(path: String, processor_name: String) -> Self {
+        let mut user_codes: HashMap<ModCoderParts, String> = HashMap::new();
+        user_codes.insert(ModCoderParts::InitBody,    "        Ok(())".to_string());
+        user_codes.insert(ModCoderParts::RunBody,     "        Ok(())".to_string());
+        user_codes.insert(ModCoderParts::ProcessBody, "        Ok(())".to_string());
+        user_codes.insert(ModCoderParts::StopBody,    "        Ok(())".to_string());
         ProcessorCoder {
             processor_name,
             inputs: HashMap::new(),
@@ -86,34 +92,12 @@ impl ProcessorCoder {
             states: HashMap::new(),
             statics: HashMap::new(),
             parameters: HashMap::new(),
-            user_codes: HashMap::new(),
+            user_codes,
             path,
             tmp_path: "".to_string(),
         }
     }
-    fn get_code_file(&mut self) -> Result<std::fs::File, String> {
-        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        let mut rng = rng();
-        let random_string: String = (0..16)
-            .map(|_| {
-                let idx = rng.random_range(0..CHARSET.len());
-                CHARSET[idx] as char
-            })
-            .collect();
-        
-        self.tmp_path = format!("/tmp/processor_coder_{}.rs", random_string);
-        match std::fs::File::create(&self.tmp_path) {
-            Ok(file) => Ok(file),
-            Err(e) => Err(format!("Error creating file {}: {}", self.path, e)),
-        }
-    }
-    fn file_write(&mut self, content: String, mut code_file: std::fs::File) -> Result<(), String> {
-        use std::io::Write;
-        match code_file.write_all(content.as_bytes()) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(format!("Error writing to file {}: {}", self.path, e)),
-        }
-    }
+    
     pub fn add_code_section(&mut self, part: ModCoderParts, code: String) {
         self.user_codes.insert(part, code);
     }
@@ -124,9 +108,6 @@ impl ProcessorCoder {
             },
             "output" => {
                 self.outputs.insert(name.clone(), data_type.clone());
-            },
-            "state" => {
-                self.states.insert(name.clone(), data_type.clone());
             },
             _ => {},
         }
@@ -146,6 +127,9 @@ impl ProcessorCoder {
             }),
         };
         match category.as_str() {
+            "state" => {
+                self.states.insert(name.clone(), settable);
+            },
             "static" => {
                 self.statics.insert(name.clone(), settable);
             },
@@ -174,8 +158,8 @@ impl ProcessorCoder {
         code_lines.push(format!("use stream_proc_macro::{{StreamBlockMacro}};"));
         code_lines.push(format!("use data_model::streaming_data::{{StreamingError, StreamingState}};"));
         code_lines.push(format!("use data_model::memory_manager::{{DataTrait, StaticsTrait, State, Parameter, Statics}};"));
-        code_lines.push(format!("use crate::stream_processor::{{StreamBlock, StreamBlockDyn, StreamProcessor}};"));
-        code_lines.push(format!("use crate::connectors::{{ConnectorTrait, Input, Output}};"));
+        code_lines.push(format!("use processor_engine::stream_processor::{{StreamBlock, StreamBlockDyn, StreamProcessor}};"));
+        code_lines.push(format!("use processor_engine::connectors::{{ConnectorTrait, Input, Output}};"));
         code_lines.join("\n")
     }
     fn generate_user_defined_code(&self) -> String {
@@ -226,7 +210,7 @@ impl ProcessorCoder {
         if let Some(code) = self.user_codes.get(&ModCoderParts::UserDefinedBuilder) {
             code_lines.push(code.clone());
         }
-        code_lines.push(format!("    }};"));
+        code_lines.push(format!("        }};"));
         code_lines.join("\n")
     }
     fn generate_member_creation(&self) -> String {
@@ -238,7 +222,7 @@ impl ProcessorCoder {
             code_lines.push(format!("        ret.new_output::<{}>(\"{}\");", output_type, output_name));
         }
         for (state_name, state_type) in self.states.iter() {
-            code_lines.push(format!("        ret.new_state::<{}>(\"{}\");", state_type, state_name));
+            code_lines.push(format!("        ret.new_state::<{}>(\"{}\", {});", state_type.data_type, state_name, state_type.default));
         }
         for (static_name, static_typed) in self.statics.iter() {
             if let Some(limits) = &static_typed.limits {
@@ -276,42 +260,46 @@ impl ProcessorCoder {
     fn generate_init_body(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
         code_lines.push(format!("impl StreamProcessor for {} {{", self.processor_name));
-        code_lines.push(format!("    pub fn init(&mut self) -> Result<(), StreamingError> {{"));
+        code_lines.push(format!("    fn init(&mut self) -> Result<(), StreamingError> {{"));
         if let Some(code) = self.user_codes.get(&ModCoderParts::InitBody) {
-            return code.clone();
+            code_lines.push(code.clone());
         }
         code_lines.push(format!("    }}"));
         code_lines.join("\n")
     }
     fn generate_run_body(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
-        code_lines.push(format!("    pub fn run(&mut self) -> Result<(), StreamingError> {{"));
+        code_lines.push(format!("    fn run(&mut self) -> Result<(), StreamingError> {{"));
         if let Some(code) = self.user_codes.get(&ModCoderParts::RunBody) {
-            return code.clone();
+            code_lines.push(code.clone());
         }
         code_lines.push(format!("    }}"));
         code_lines.join("\n")
     }
     fn generate_process_body(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
-        code_lines.push(format!("    pub fn processes(&mut self) -> Result<(), StreamingError> {{"));
+        code_lines.push(format!("    fn process(&mut self) -> Result<(), StreamingError> {{"));
         if let Some(code) = self.user_codes.get(&ModCoderParts::ProcessBody) {
-            return code.clone();
+            code_lines.push(code.clone());
         }
         code_lines.push(format!("    }}"));
         code_lines.join("\n")
     }
     fn generate_stop_body(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
-        code_lines.push(format!("    pub fn stop(&mut self) -> Result<(), StreamingError> {{"));
+        code_lines.push(format!("    fn stop(&mut self) -> Result<(), StreamingError> {{"));
         if let Some(code) = self.user_codes.get(&ModCoderParts::StopBody) {
-            return code.clone();
+            code_lines.push(code.clone());
         }
         code_lines.push(format!("    }}"));
+        code_lines.push(format!("}}"));
         code_lines.join("\n")
     }
-    pub fn generate(&mut self) -> Result<(), String> {
-        let mut code_file = self.get_code_file()?;
+}
+
+impl Coder for ProcessorCoder {
+    fn generate(&mut self) -> Result<(), String> {
+        let code_file = self.get_tmp_file();
         let mut code_lines: Vec<String> = Vec::new();
         code_lines.push(self.generate_head_mod());
         code_lines.push(self.generate_user_defined_code());
@@ -327,8 +315,12 @@ impl ProcessorCoder {
         code_lines.push(self.generate_process_body());
         code_lines.push(self.generate_stop_body());
         let full_code = code_lines.join("\n");
-        self.file_write(full_code, code_file)?;
-        std::fs::rename(&self.tmp_path, &self.path).map_err(|e| format!("Error renaming temp file to {}: {}", self.path, e))?;
+        self.file_write(code_file.clone(), full_code)?;
+        println!("Moving temp file to file {}", &self.path);
+        std::fs::rename(&code_file.clone(), &self.path).map_err(|e| format!("Error renaming temp file to {}: {}", self.path, e))?;
         Ok(())
     }
+    fn as_any(&self) -> &dyn std::any::Any {self}
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {self}
 }

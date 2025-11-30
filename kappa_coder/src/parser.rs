@@ -2,25 +2,74 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::path::Path;
 
-use coder::coder::Coder;
-use coder::processor_coder::ModCoderParts;
-use coder::main_coder::MainCoderParts;
-use coder::coder::BuildType;
+use coder::lib_coder::LibCoder;
+use coder::main_coder::{MainCoderParts, MainCoder};
+use coder::processor_coder::{ModCoderParts, ProcessorCoder};
+use coder::coder::{Coder, to_snake_case};
 
+use crate::cargo_interface::CargoInterface;
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum ObjectCategory {
+    Crate,
+    StreamProcBlock,
+    Input,
+    Output,
+    State,
+    Static,
+    Parameter,
+    Application,
+    Task,
+    StreamProc,
+    Connection,
+    Setting,
+}
+
+impl From<&String> for ObjectCategory {
+    fn from(type_str: &String) -> Self {
+        match type_str.as_str() {
+            "crate" => ObjectCategory::Crate,
+            "stream_proc_block" => ObjectCategory::StreamProcBlock,
+            "input" => ObjectCategory::Input,
+            "output" => ObjectCategory::Output,
+            "state" => ObjectCategory::State,
+            "static" => ObjectCategory::Static,
+            "parameter" => ObjectCategory::Parameter,
+            "application" => ObjectCategory::Application,
+            "task" => ObjectCategory::Task,
+            "stream_proc" => ObjectCategory::StreamProc,
+            "connection" => ObjectCategory::Connection,
+            "setting" => ObjectCategory::Setting,
+            _ => panic!("Unknown object type: {}", type_str),
+        }
+    }
+}
+
+impl Into<String> for ObjectCategory {
+    fn into(self) -> String {
+        match self {
+            ObjectCategory::Crate => "crate".to_string(),
+            ObjectCategory::StreamProcBlock => "stream_proc_block".to_string(),
+            ObjectCategory::Input => "input".to_string(),
+            ObjectCategory::Output => "output".to_string(),
+            ObjectCategory::State => "state".to_string(),
+            ObjectCategory::Static => "static".to_string(),
+            ObjectCategory::Parameter => "parameter".to_string(),
+            ObjectCategory::Application => "application".to_string(),
+            ObjectCategory::Task => "task".to_string(),
+            ObjectCategory::StreamProc => "stream_proc".to_string(),
+            ObjectCategory::Connection => "connection".to_string(),
+            ObjectCategory::Setting => "setting".to_string(),
+        }
+    }
+}
 pub struct MemoryObject {
-    parent: String,
-    object_type: String,
-    coder: Coder,
+    pub parent: String,
+    pub object_category: ObjectCategory,
+    pub object_type: String,
+    pub object_value: String,
+    pub object_limits: String,
 }
 
-impl MemoryObject {
-    pub fn get_parent(&self) -> &String {
-        &self.parent
-    }
-    pub fn get_object_type(&self) -> &String {
-        &self.object_type
-    }
-}
 type ParserFunctionReturn = Result<(), String>;
 type ParserFunction = fn(&mut Parser, &Vec<String>) -> ParserFunctionReturn;
 
@@ -28,8 +77,10 @@ type ParserFunction = fn(&mut Parser, &Vec<String>) -> ParserFunctionReturn;
 pub struct Parser {
     commands_fn: HashMap<String, ParserFunction>,
     create_types_fn: HashMap<String, ParserFunction>,
-    object_map: HashMap<String, MemoryObject>,
+    projects_map: HashMap<String, HashMap<String, MemoryObject>>,
+    coder_map: HashMap<String, Box<dyn Coder>>,
     library_path: String,
+    cargo_if: CargoInterface,
 }
 
 impl Parser {
@@ -47,38 +98,52 @@ impl Parser {
         create_types_fn.insert("stream_proc_block".to_string(), Parser::create_stream_proc_block);
         create_types_fn.insert("input".to_string(), Parser::create_typed);
         create_types_fn.insert("output".to_string(), Parser::create_typed);
-        create_types_fn.insert("state".to_string(), Parser::create_typed);
+        create_types_fn.insert("state".to_string(), Parser::create_settable);
         create_types_fn.insert("static".to_string(), Parser::create_settable);
         create_types_fn.insert("parameter".to_string(), Parser::create_settable);
         create_types_fn.insert("application".to_string(), Parser::create_application);
         create_types_fn.insert("task".to_string(), Parser::create_task);
         create_types_fn.insert("stream_proc".to_string(), Parser::create_stream_proc);
-
+        
+        let cargo_path;
+        if let Some(path) = std::env::var_os("HOME") {
+            cargo_path = format!("{}/.cargo/bin/cargo", path.into_string().unwrap());
+        } else {
+            cargo_path = "cargo".to_string();
+        }
         Self {
             commands_fn,
             create_types_fn,
-            object_map: HashMap::new(),
+            projects_map: HashMap::new(),
+            coder_map: HashMap::new(),
             library_path: "".to_string(),
+            cargo_if: CargoInterface {
+                cargo_path: cargo_path,
+                library_path: "".to_string(),
+            },
         }
     }
     pub fn set_library_path(&mut self, path: String) -> Result<(), String> {
-        if path.is_empty() {
-            return Err("Library path cannot be empty.".to_string());
-        }
-        if !Path::new(&path).exists() {
-            return Err("Library path does not exist.".to_string());
-        }
-        self.library_path = path;
+        let canonical_path = std::fs::canonicalize(&path);
+        let canonical_path = match canonical_path {
+            Err(_) => return Err("Library path does not exist.".to_string()),
+            Ok(p) => p,
+        };
+        let canonical_path = canonical_path.to_str().unwrap().to_string();
+        self.library_path = canonical_path.clone();
+        self.cargo_if.library_path = canonical_path;
         Ok(())
     }
     pub fn get() -> &'static Mutex<Parser> {
         PARSER.get_or_init(|| Mutex::new(Parser::new()))
     }
     fn check_var(&self, var_name: &String, expected_type: &String) -> ParserFunctionReturn {
-        if self.object_map.contains_key(var_name) {
-            let memory_object = self.object_map.get(var_name).unwrap();
-            if &memory_object.object_type != expected_type {
-                return Err(format!("Type mismatch for variable {}: expected {}, found {}.", var_name, expected_type, memory_object.object_type));
+        let split_name = var_name.split(".").collect::<Vec<&str>>();
+        let object_map = self.projects_map.get(&split_name[0].to_string()).ok_or_else(|| format!("Project {} not found.", split_name[0]))?;
+        if object_map.contains_key(var_name) {
+            let memory_object = object_map.get(var_name).unwrap();
+            if memory_object.object_category != (&expected_type.clone()).into() {
+                return Err(format!("Type mismatch for variable {}: expected {}, found {}.", var_name, expected_type, <ObjectCategory as Into<String>>::into(memory_object.object_category)));
             }
             Ok(())
         } else {
@@ -87,80 +152,119 @@ impl Parser {
     }
     fn create_crate(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
         let crate_name = tokens.get(2).ok_or_else(|| "Missing crate name".to_string())?;
-        if self.object_map.contains_key(crate_name) {
+        if self.projects_map.contains_key(crate_name) {
             return Err(format!("Crate {} already exists.", crate_name));
         }
         if tokens.get(3) != Some(&"path".to_string()) {
             return Err(format!("Expected path keyword."));
         }
-        let crate_path = tokens.get(4).ok_or_else(|| "Missing crate path".to_string())?;
+        let crate_folder = tokens.get(4).ok_or_else(|| "Missing crate path".to_string())?;
         if tokens.get(5) != Some(&"metadata".to_string()) {
             return Err(format!("Expected metadata keyword."));
         }
         let metadata = tokens.get(6).ok_or_else(|| "Missing metadata value".to_string())?;
-        let mut coder = Coder::new(crate_path.clone(), self.library_path.clone(), BuildType::Library);
-        coder.create_crate(crate_name, metadata)?;
+        let crate_path = format!("{}/{}", crate_folder, crate_name);
+        self.cargo_if.cargo_new_library(crate_path.to_string())?;
+        self.cargo_if.cargo_add_commands(crate_path.to_string())?; 
         let memory_object = MemoryObject {
             parent: "".to_string(),
-            object_type: "crate".to_string(),
-            coder,
+            object_category: ObjectCategory::Crate,
+            object_type: crate_path.clone(),
+            object_value: metadata.clone(),
+            object_limits: "".to_string(),
         };
-        self.object_map.insert(crate_name.clone(), memory_object);
-        
+        let mut object_map: HashMap<String, MemoryObject> = HashMap::new();
+        object_map.insert(crate_name.clone(), memory_object);
+        self.projects_map.insert(crate_name.clone(), object_map);
+        let path = format!("{}/src/lib.rs", crate_path);
+        let mut lib_coder = LibCoder::new(path.clone());
+        lib_coder.generate()?;
+        self.coder_map.insert(crate_name.clone(), Box::new(lib_coder));
         Ok(())
     }
     fn create_stream_proc_block(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
         let block_name = tokens.get(2).ok_or_else(|| "Missing stream processor block name".to_string())?;
-        if self.object_map.contains_key(block_name) {
-            return Err(format!("Stream processor block {} already exists.", block_name));
-        }
         let split_name = block_name.split(".").collect::<Vec<&str>>();
         if split_name.len() != 2 {
             return Err(format!("Stream processor block name must be in the format <crate_name>.<block_name>."));
         }
         self.check_var(&split_name[0].to_string(), &"crate".to_string())?;
-        let mut coder = self.object_map.get(&split_name[0].to_string()).unwrap().coder.clone();
-        coder.create_processor_block(block_name.clone())?;
+        let object_map = self.projects_map.get_mut(&split_name[0].to_string()).unwrap();
+        if object_map.contains_key(block_name) {
+            return Err(format!("Stream processor block {} already exists.", block_name));
+        }
         let memory_object = MemoryObject {
             parent: split_name[0].to_string(),
-            object_type: "stream_proc_block".to_string(),
-            coder,
+            object_category: ObjectCategory::StreamProcBlock,
+            object_type: "".to_string(),
+            object_value: "".to_string(),
+            object_limits: "".to_string(),
         };
-        self.object_map.insert(block_name.clone(), memory_object);
+        let mut lib_coder: LibCoder;
+        match self.coder_map.get_mut(&split_name[0].to_string()) {
+            Some(coder) => {
+                if let Some(lib_coder_mut) = coder.as_any_mut().downcast_mut::<LibCoder>() {
+                    lib_coder = lib_coder_mut.clone();
+                } else {
+                    return Err(format!("Coder for crate {} is not a LibCoder.", split_name[0]));
+                }
+            },
+            None => return Err(format!("Coder for crate {} not found.", split_name[0])),
+        }
+        let block_coder_path = format!("{}/{}.rs", lib_coder.get_path().rsplitn(2, '/').nth(1).unwrap(), to_snake_case(&split_name[1].to_string()));
+        let mut processor_coder = ProcessorCoder::new(block_coder_path.clone(), split_name[1].to_string());
+        processor_coder.generate()?;
+        object_map.insert(block_name.clone(), memory_object);        
+        self.coder_map.insert(block_name.clone(), Box::new(processor_coder));
+        lib_coder.add_module(split_name[1].to_string());
+        lib_coder.generate()?;
+        self.coder_map.insert(split_name[0].to_string(), Box::new(lib_coder));
         Ok(())
     }
     fn create_typed(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
-        let object_type = tokens.get(1).ok_or_else(|| "Missing object type".to_string())?;
-        let object_name = tokens.get(2).ok_or_else(|| "Missing crate name".to_string())?;
-        if self.object_map.contains_key(object_name) {
-            return Err(format!("{} {} already exists.", object_type,object_name));
-        }
+        let object_category = tokens.get(1).ok_or_else(|| "Missing object type".to_string())?;
+        let object_name = tokens.get(2).ok_or_else(|| "Missing object name".to_string())?;
         let split_name = object_name.split(".").collect::<Vec<&str>>();
         if split_name.len() != 3 {
-            return Err(format!("Input name must be in the format <>.<>.<>."));
+            return Err(format!("Settable name must be in the format <>.<>.<>."));
         }
         let parent_block = format!("{}.{}", split_name[0], split_name[1]);
-        self.check_var(&parent_block, &"stream_proc_block".to_string())?;
+        self.check_var(&parent_block.clone(), &"stream_proc_block".to_string())?;
         if tokens.get(3) != Some(&"type".to_string()) {
             return Err(format!("Expected type keyword."));
         }
-        let object_type = tokens.get(4).ok_or_else(|| format!("Missing {} type", object_type))?;
-        let mut coder = self.object_map.get(&split_name[0].to_string()).unwrap().coder.clone();
-        coder.create_typed(&object_type.clone(), &object_name.clone(), &object_type.clone())?;
+        let object_type = tokens.get(4).ok_or_else(|| format!("Missing type"))?;
+        let object_map = self.projects_map.get_mut(&split_name[0].to_string()).unwrap();
+        if object_map.contains_key(object_name) {
+            return Err(format!("{} {} already exists.", object_category,object_name));
+        }
         let memory_object = MemoryObject {
-            parent: parent_block,
+            parent: parent_block.clone(),
+            object_category: (&object_category.clone()).into(),
             object_type: object_type.clone(),
-            coder,
+            object_value: "".to_string(),
+            object_limits: "".to_string(),
         };
-        self.object_map.insert(object_name.clone(), memory_object);
+        object_map.insert(object_name.clone(), memory_object);
+        let mut coder: ProcessorCoder;
+        match self.coder_map.get_mut(&parent_block.clone()) {
+            Some(some_coder) => {
+                if let Some(coder_mut) = some_coder.as_any_mut().downcast_mut::<ProcessorCoder>() {
+                    coder = coder_mut.clone();
+                } else {
+                    return Err(format!("Coder for crate {} is not a LibCoder.", split_name[0]));
+                }
+            },
+            None => return Err(format!("Coder for crate {} not found.", split_name[0])),
+        }
+        coder.add_typed(&object_category.clone(), &object_name.clone(), &object_type.clone());
+        coder.generate()?;
+        self.coder_map.insert(parent_block.clone(), Box::new(coder));
         Ok(())
     }
     fn create_settable(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
-        let object_type = tokens.get(1).ok_or_else(|| "Missing object type".to_string())?;
+        let object_category = tokens.get(1).ok_or_else(|| "Missing object type".to_string())?;
         let object_name = tokens.get(2).ok_or_else(|| "Missing crate name".to_string())?;
-        if self.object_map.contains_key(object_name) {
-            return Err(format!("{} {} already exists.", object_type,object_name));
-        }
         let split_name = object_name.split(".").collect::<Vec<&str>>();
         if split_name.len() != 3 {
             return Err(format!("Input name must be in the format <>.<>.<>."));
@@ -170,74 +274,112 @@ impl Parser {
         if tokens.get(3) != Some(&"type".to_string()) {
             return Err(format!("Expected type keyword."));
         }
-        let object_type = tokens.get(4).ok_or_else(|| format!("Missing {} type", object_type))?;
+        let object_type = tokens.get(4).ok_or_else(|| format!("Missing type"))?;
         if tokens.get(5) != Some(&"value".to_string()) {
             return Err(format!("Expected value keyword."));
         }
-        let object_value = tokens.get(6).ok_or_else(|| format!("Missing {} value", object_type))?;
+        let object_value = tokens.get(6).ok_or_else(|| format!("Missing value"))?;
         let mut object_limits = None;
         if let Some(limits_key) = tokens.get(7) {
             if limits_key != "limits" {
                 return Err(format!("Expected limits keyword."));
             }
-            let value_limits = tokens.get(8).ok_or_else(|| format!("Missing {} limits", object_type))?;
+            let value_limits = tokens.get(8).ok_or_else(|| format!("Missing limits"))?;
             object_limits = Some(value_limits);
         }
-        let mut coder = self.object_map.get(&split_name[0].to_string()).unwrap().coder.clone();
-        coder.create_settable(&object_type.clone(), &object_name.clone(), &object_type.clone(), &object_value.clone(), object_limits)?;
+        let object_map = self.projects_map.get_mut(&split_name[0].to_string()).unwrap();
         let memory_object = MemoryObject {
-            parent: parent_block,
+            parent: parent_block.clone(),
+            object_category: (&object_category.clone()).into(),
             object_type: object_type.clone(),
-            coder,
+            object_value: object_value.clone(),
+            object_limits: object_limits.unwrap_or(&"".to_string()).clone(),
         };
-        self.object_map.insert(object_name.clone(), memory_object);
+        object_map.insert(object_name.clone(), memory_object);
+        let mut coder: ProcessorCoder;
+        match self.coder_map.get_mut(&parent_block.clone()) {
+            Some(some_coder) => {
+                if let Some(coder_mut) = some_coder.as_any_mut().downcast_mut::<ProcessorCoder>() {
+                    coder = coder_mut.clone();
+                } else {
+                    return Err(format!("Coder for crate {} is not a LibCoder.", split_name[0]));
+                }
+            },
+            None => return Err(format!("Coder for crate {} not found.", split_name[0])),
+        }
+        coder.add_settable(&object_category.clone(), &object_name.clone(), &object_type.clone(), &object_value.clone(), object_limits);
+        coder.generate()?;
+        self.coder_map.insert(parent_block.clone(), Box::new(coder));
         Ok(())
     }
     fn create_application(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
         let application_name = tokens.get(2).ok_or_else(|| "Missing application name".to_string())?;
-        if self.object_map.contains_key(application_name) {
+        if self.projects_map.contains_key(application_name) {
             return Err(format!("Application {} already exists.", application_name));
         }
         if tokens.get(3) != Some(&"path".to_string()) {
             return Err(format!("Expected path keyword."));
         }
-        let crate_path = tokens.get(4).ok_or_else(|| "Missing crate path".to_string())?;
-        let mut coder = Coder::new(crate_path.clone(), self.library_path.clone(), BuildType::Application);
-        coder.create_application(application_name)?;
+        let application_folder = tokens.get(4).ok_or_else(|| "Missing application path".to_string())?;
+        let metadata = tokens.get(6).ok_or_else(|| "Missing metadata value".to_string())?;
+        let application_path = format!("{}/{}", application_folder, application_name);
+        self.cargo_if.cargo_new_application(application_path.to_string())?;
+        self.cargo_if.cargo_add_commands(application_path.to_string())?; 
         let memory_object = MemoryObject {
             parent: "".to_string(),
-            object_type: "application".to_string(),
-            coder,
+            object_category: ObjectCategory::Application,
+            object_type: application_path.clone(),
+            object_value: metadata.clone(),
+            object_limits: "".to_string(),
         };
-        self.object_map.insert(application_name.clone(), memory_object);
+        let mut object_map: HashMap<String, MemoryObject> = HashMap::new();
+        object_map.insert(application_name.clone(), memory_object);
+        self.projects_map.insert(application_name.clone(), object_map);
+        let path = format!("{}/src/main.rs", application_path);
+        let mut main_coder = MainCoder::new(path.clone());
+        main_coder.generate()?;
+        self.coder_map.insert(application_name.clone(), Box::new(main_coder));
         Ok(())
     }
     fn create_task(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
         let task_name = tokens.get(2).ok_or_else(|| "Missing task name".to_string())?;
-        if self.object_map.contains_key(task_name) {
-            return Err(format!("Task {} already exists.", task_name));
-        }
         let split_name = task_name.split(".").collect::<Vec<&str>>();
         if split_name.len() != 2 {
             return Err(format!("Task name must be in the format <>.<>."));
         }
         self.check_var(&split_name[0].to_string(), &"application".to_string())?;
-        let mut coder = self.object_map.get(&split_name[0].to_string()).unwrap().coder.clone();
-        coder.create_task(&task_name)?;
+        let mut main_coder: MainCoder;
+        match self.coder_map.get_mut(&split_name[0].to_string()) {
+            Some(some_coder) => {
+                if let Some(main_coder_mut) = some_coder.as_any_mut().downcast_mut::<MainCoder>() {
+                    main_coder = main_coder_mut.clone();
+                } else {
+                    return Err(format!("Coder for crate {} is not a MainCoder.", split_name[0]));
+                }
+            },
+            None => return Err(format!("Coder for crate {} not found.", split_name[0])),
+        }
+        let object_map = self.projects_map.get_mut(&split_name[0].to_string()).unwrap();
+        if object_map.contains_key(task_name) {
+            return Err(format!("Task {} already exists.", task_name));
+        }
         let memory_object = MemoryObject {
             parent: split_name[0].to_string(),
-            object_type: "task".to_string(),
-            coder,
+            object_category: ObjectCategory::Task,
+            object_type: "".to_string(),
+            object_value: "".to_string(),
+            object_limits: "".to_string(),
         };
-        self.object_map.insert(task_name.clone(), memory_object);
+        object_map.insert(task_name.clone(), memory_object);
+        main_coder.add_task_processor(task_name.clone());
+        main_coder.generate()?;
+        self.coder_map.insert(split_name[0].to_string(), Box::new(main_coder));
         Ok(())
     }
     fn create_stream_proc(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
-        let object_type = tokens.get(1).ok_or_else(|| "Missing object type".to_string())?;
+        let object_category = tokens.get(1).ok_or_else(|| "Missing object type".to_string())?;
         let object_name = tokens.get(2).ok_or_else(|| "Missing stream processor name".to_string())?;
-        if self.object_map.contains_key(object_name) {
-            return Err(format!("{} {} already exists.", object_type,object_name));
-        }
+        
         let split_name = object_name.split(".").collect::<Vec<&str>>();
         if split_name.len() != 3 {
             return Err(format!("Input name must be in the format <>.<>.<>."));
@@ -247,15 +389,33 @@ impl Parser {
         if tokens.get(3) != Some(&"type".to_string()) {
             return Err(format!("Expected type keyword."));
         }
-        let object_type = tokens.get(4).ok_or_else(|| format!("Missing {} type", object_type))?;
-        let mut coder = self.object_map.get(&split_name[0].to_string()).unwrap().coder.clone();
-        coder.create_processor(&object_type.clone(), &object_name.clone(), &object_type.clone())?;
+        let object_type = tokens.get(4).ok_or_else(|| format!("Missing type"))?;
+        let object_map = self.projects_map.get_mut(&split_name[0].to_string()).unwrap();
+        if object_map.contains_key(object_name) {
+            return Err(format!("{} {} already exists.", object_category,object_name));
+        }
         let memory_object = MemoryObject {
-            parent: parent_block,
-            object_type: object_type.clone(),
-            coder,
+            parent: split_name[0].to_string(),
+            object_category: ObjectCategory::StreamProc,
+            object_type: object_category.clone(),
+            object_value: "".to_string(),
+            object_limits: "".to_string(),
         };
-        self.object_map.insert(object_name.clone(), memory_object);
+        object_map.insert(object_name.clone(), memory_object);
+        let mut main_coder: MainCoder;
+        match self.coder_map.get_mut(&split_name[0].to_string()) {
+            Some(some_coder) => {
+                if let Some(main_coder_mut) = some_coder.as_any_mut().downcast_mut::<MainCoder>() {
+                    main_coder = main_coder_mut.clone();
+                } else {
+                    return Err(format!("Coder for crate {} is not a MainCoder.", split_name[0]));
+                }
+            },
+            None => return Err(format!("Coder for crate {} not found.", split_name[0])),
+        }
+        main_coder.add_stream_processor(object_name.clone(), object_type.clone());
+        main_coder.generate()?;
+        self.coder_map.insert(split_name[0].to_string(), Box::new(main_coder));
         Ok(())
     }
     fn parse_create(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
@@ -270,26 +430,29 @@ impl Parser {
         create_function(self, tokens)?;
         Ok(())
     }
-    fn delete(&mut self, object_name: String) {
+    fn delete(&mut self, object_name: String) -> Result<(), String> {
         let split_name = object_name.split(".").collect::<Vec<&str>>();
+        let object_map = self.projects_map.get_mut(&split_name[0].to_string()).unwrap();
         if split_name.len() == 1 {
             // Application or Crate deletion
-            let children = self.object_map.iter()
+            let children = object_map.iter()
                 .filter(|(_, v)| v.parent == object_name)
                 .map(|(k, _)| k.clone())
                 .collect::<Vec<String>>();
             for child in children {
-                self.object_map.retain(|_, v| v.parent != child);
+                object_map.retain(|_, v| v.parent != child);
             }
-            self.object_map.retain(|k, _| k != &object_name);
+            object_map.retain(|k, _| k != &object_name);
+            self.cargo_if.delete_project(object_name.clone())?;
         } else if split_name.len() == 2 {
             //  Task or stream_proc_block deletion
-            self.object_map.retain(|_, v| v.parent != object_name);
-            self.object_map.retain(|k, _| k != &object_name);
+            object_map.retain(|_, v| v.parent != object_name);
+            object_map.retain(|k, _| k != &object_name);
         } else if split_name.len() == 3 {
             // Typed object or stream_proc deletion
-            self.object_map.retain(|k, _| k != &object_name);
+            object_map.retain(|k, _| k != &object_name);
         }
+        Ok(())
     }
     fn parse_delete(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
         let object_name = tokens.get(1).ok_or_else(|| "Missing object name".to_string())?;
@@ -297,26 +460,46 @@ impl Parser {
         if split_name.len() == 0 {
             return Err(format!("Invalid object name."));
         }
-        if !self.object_map.contains_key(object_name) {
+        let object_map = self.projects_map.get_mut(&split_name[0].to_string()).ok_or_else(|| format!("Project {} does not exist.", split_name[0]))?;
+        if !object_map.contains_key(object_name) {
             return Err(format!("Object {} does not exist.", object_name));
         }
-        self.delete(object_name.clone());
-        if split_name.len() > 1 {
-            // Application or Crate deletion
-            let mut coder = self.object_map.get(&object_name.to_string()).unwrap().coder.clone();
-            coder.delete_object(&object_name)?;
-        }
+        self.delete(object_name.clone())?;
         Ok(())
     }
     fn parse_connect(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
         let source_name = tokens.get(1).ok_or_else(|| "Missing source name".to_string())?;
         let target_name = tokens.get(2).ok_or_else(|| "Missing target name".to_string())?;
-        self.check_var(source_name, &"output".to_string())?;
-        self.check_var(target_name, &"input".to_string())?;
+        let source_split_name = source_name.split(".").collect::<Vec<&str>>();
+        if source_split_name.len() != 4 {
+            return Err(format!("Connectable object name must be in the format <>.<>.<>.<>."));
+        }
+        let target_split_name = target_name.split(".").collect::<Vec<&str>>();
+        if target_split_name.len() != 4 {
+            return Err(format!("Connectable object name must be in the format <>.<>.<>.<>."));
+        }
+        let from_processor = format!("{}.{}.{}", source_split_name[0], source_split_name[1], source_split_name[2]);
+        let to_processor = format!("{}.{}.{}", target_split_name[0], target_split_name[1], target_split_name[2]);
+        self.check_var(&from_processor, &"stream_proc".to_string())?;
+        self.check_var(&to_processor, &"stream_proc".to_string())?;
+        let mut main_coder: MainCoder;
+        match self.coder_map.get_mut(&source_split_name[0].to_string()) {
+            Some(some_coder) => {
+                if let Some(main_coder_mut) = some_coder.as_any_mut().downcast_mut::<MainCoder>() {
+                    main_coder = main_coder_mut.clone();
+                } else {
+                    return Err(format!("Coder for crate {} is not a MainCoder.", source_split_name[0]));
+                }
+            },
+            None => return Err(format!("Coder for crate {} not found.", source_split_name[0])),
+        }
+        main_coder.add_connection(from_processor.clone(), source_name.clone(), to_processor.clone(), target_name.clone());
+        main_coder.generate()?;
+        self.coder_map.insert(source_split_name[0].to_string(), Box::new(main_coder));
         Ok(())
     }
     fn parse_set(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
-        let object_type = tokens.get(1).ok_or_else(|| "Missing variable type".to_string())?;
+        let object_category = tokens.get(1).ok_or_else(|| "Missing variable type".to_string())?;
         let object_name = tokens.get(2).ok_or_else(|| "Missing variable name".to_string())?;
         let split_name = object_name.split(".").collect::<Vec<&str>>();
         if split_name.len() != 4 {
@@ -325,8 +508,20 @@ impl Parser {
         let parent_block = format!("{}.{}.{}", split_name[0], split_name[1], split_name[2]);
         self.check_var(&parent_block, &"stream_proc".to_string())?;
         let value = tokens.get(3).ok_or_else(|| "Missing variable value".to_string())?;
-        let mut coder = self.object_map.get(&object_name.to_string()).unwrap().coder.clone();
-        coder.set_value(object_type, object_name, value)?;
+        let mut main_coder: MainCoder;
+        match self.coder_map.get_mut(&split_name[0].to_string()) {
+            Some(some_coder) => {
+                if let Some(main_coder_mut) = some_coder.as_any_mut().downcast_mut::<MainCoder>() {
+                    main_coder = main_coder_mut.clone();
+                } else {
+                    return Err(format!("Coder for crate {} is not a MainCoder.", split_name[0]));
+                }
+            },
+            None => return Err(format!("Coder for crate {} not found.", split_name[0])),
+        }
+        main_coder.add_setting_value(parent_block.clone(), object_category.clone(), object_name.clone(), value.clone());
+        main_coder.generate()?;
+        self.coder_map.insert(split_name[0].to_string(), Box::new(main_coder));
         Ok(())
     }
     fn parse_code(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
@@ -337,8 +532,6 @@ impl Parser {
                 let code_id = ModCoderParts::try_from(code_string.clone())
                     .map_err(|_| format!("Invalid processor code part: {}", code_string))?;
                 let code = tokens.get(3).ok_or_else(|| "Missing processor code".to_string())?;
-                let mut coder = self.object_map.get(&object_name.to_string()).unwrap().coder.clone();
-                coder.create_processor_code(object_name, code_id, code)?;
             },
             Err(_) => {
                 match self.check_var(object_name, &"application".to_string()) {
@@ -346,8 +539,6 @@ impl Parser {
                         let code_id = MainCoderParts::try_from(code_string.clone())
                             .map_err(|_| format!("Invalid application code part: {}", code_string))?;
                         let code = tokens.get(3).ok_or_else(|| "Missing application code".to_string())?;
-                        let mut coder = self.object_map.get(&object_name.to_string()).unwrap().coder.clone();
-                        coder.create_application_code(code_id, code)?;
                     },
                     Err(_) => {return Err(format!("Object {} does not allow user code.", object_name));},
                 }
@@ -357,25 +548,51 @@ impl Parser {
     }
     fn parse_build(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
         let build_object_name = tokens.get(1).ok_or_else(|| "Missing artifact name".to_string())?;
+        let build_path: String;
         match self.check_var(build_object_name, &"crate".to_string()) {
-            Ok(_) => {},
+            Ok(_) => {
+                match self.coder_map.get_mut(&build_object_name.clone()) {
+                    Some(coder) => {
+                        if let Some(lib_coder_mut) = coder.as_any_mut().downcast_mut::<LibCoder>() {
+                            build_path = lib_coder_mut.get_path();
+                        } else {
+                            return Err(format!("Coder for crate {} is not a LibCoder.", build_object_name));
+                        }
+                    },
+                    None => return Err(format!("Coder for crate {} not found.", build_object_name)),
+                }
+            },
             Err(_) => {
                 match self.check_var(build_object_name, &"application".to_string()) {
-                    Ok(_) => {},
+                    Ok(_) => {
+                        let main_coder: MainCoder;
+                        match self.coder_map.get_mut(&build_object_name.clone()) {
+                            Some(some_coder) => {
+                                if let Some(main_coder_mut) = some_coder.as_any_mut().downcast_mut::<MainCoder>() {
+                                    build_path = main_coder_mut.get_path();
+                                } else {
+                                    return Err(format!("Coder for crate {} is not a MainCoder.", build_object_name));
+                                }
+                            },
+                            None => return Err(format!("Coder for crate {} not found.", build_object_name)),
+                        }
+                    },
                     Err(_) => {return Err(format!("Build target {} is neither a crate nor an application.", build_object_name));},
                 }
             },
         }
+        
         let build_type: String;
         if let Some(build_type_value) = tokens.get(2) {
             build_type = build_type_value.to_string();
         } else {
             build_type = "debug".to_string();
         }
-        let mut coder = self.object_map.get(&build_object_name.to_string()).unwrap().coder.clone();
-        coder.build(&build_object_name, &build_type)?;
+        
+        self.cargo_if.cargo_build(build_path.clone(), build_type.clone())?;
         Ok(())
     }
+     
     pub fn parse_command(&mut self, command_string: String) -> ParserFunctionReturn {
         let commands: Vec<String> = command_string
             .split(';')
@@ -403,7 +620,7 @@ impl Parser {
             } else {
                 return Err(format!("Unknown command: {}", key_command));
             }
-            parser_function(self, &tokens)?;
+            parser_function(self, &tokens)?;            
         }
         Ok(())
     }

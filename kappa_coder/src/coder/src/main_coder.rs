@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use crate::coder::Coder;
 
 #[repr(u8)]
 #[derive(PartialEq, Eq, Hash, Clone)]
@@ -71,7 +72,8 @@ pub struct MainCoder {
     connections: Vec<Connections>,
     settings: Vec<Settings>,
     user_codes: HashMap<MainCoderParts, String>,
-    path: String,
+    crate_path: String,
+    file_path: String,
 }
 impl MainCoder {
     pub fn new(path: String) -> Self {
@@ -81,8 +83,12 @@ impl MainCoder {
             connections: Vec::new(),
             settings: Vec::new(),
             user_codes: HashMap::new(),
-            path,
+            crate_path: path.clone(),
+            file_path: format!("{}/src/main.rs", path.clone()),
         }
+    }
+    pub fn get_path(&self) -> String {
+        self.crate_path.clone()
     }
     pub fn add_task_processor(&mut self, task_name: String) {
         self.task_proc.insert(task_name.clone(), TaskProcessor {
@@ -94,7 +100,7 @@ impl MainCoder {
         let split_name: Vec<&str> = proc_name.split(".").collect();
         let task_name = split_name[0].to_string();
         let stream_proc_name = split_name[1].to_string();
-        let mut task_proc = self.task_proc.get_mut(&task_name).unwrap();
+        let task_proc = self.task_proc.get_mut(&task_name).unwrap();
         task_proc.stream_processors.push(stream_proc_name);
     }
     pub fn add_connection(&mut self, from_proc: String, from_output: String, to_proc: String, to_input: String) {
@@ -129,8 +135,16 @@ impl MainCoder {
     }
     fn create_file_head_block(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
-        code_lines.join("\n");
-        todo!();
+        code_lines.push("processor_engine::log;".to_string());
+        code_lines.push("processor_engine::logger::{LogLevel, Logger};".to_string());
+        code_lines.push("processor_engine::task_monitor::TaskManager;".to_string());
+        code_lines.push("stream_proc_macro::{StreamBlockMacro};".to_string());
+        code_lines.push("data_model::streaming_data::{StreamingError, StreamingState};".to_string());
+        code_lines.push("data_model::memory_manager::{DataTrait, StaticsTrait, State, Parameter, Statics};".to_string());
+        code_lines.push("processor_engine::stream_processor::{StreamBlock, StreamBlockDyn, StreamProcessor};".to_string());
+        code_lines.push("processor_engine::connectors::{ConnectorTrait, Input, Output};".to_string());
+        code_lines.push("processor_engine::logger::LogEntry;".to_string());
+        code_lines.join("\n")
     }
 
     fn create_stream_processor_creation_block(&self) -> String {
@@ -172,20 +186,25 @@ impl MainCoder {
     }
     fn create_stream_run_block(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
-        for task in self.task_proc.values() {
-            // TODO: Add thread spawning 
-            code_lines.push(format!(""));
+        for (task_name, task_data) in self.task_proc.iter() {
+            code_lines.push(format!("let mut task_manager = TaskManager::get().lock().unwrap();"));
+            code_lines.push(format!("task_manager.spawn_task(\"{}\", | {{", task_name));
+            for stream_proc_name in task_data.stream_processors.iter() {
+                code_lines.push(format!("    processor_engine.process(\"{}\").unwrap();", stream_proc_name));
+            }
+            code_lines.push("});".to_string());
         }
-        code_lines.join("\n");
-        todo!();
+        code_lines.join("\n")
     }
     fn create_stream_stop_block(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
         code_lines.push("processor_engine.stop().unwrap();".to_string());
         code_lines.join("\n")
     }
-
-    pub fn generate(&self) -> Result<(), String> {
+}
+impl Coder for MainCoder {
+    fn generate(&mut self) -> Result<(), String> {
+        let code_file = self.get_tmp_file();
         let mut code_lines: Vec<String> = Vec::new();
         code_lines.push("// Auto-generated main.rs file".to_string());
         code_lines.push(self.create_file_head_block());
@@ -197,7 +216,13 @@ impl MainCoder {
         code_lines.push(self.create_stream_run_block());
         code_lines.push(self.create_stream_stop_block());
         code_lines.join("\n");
+        let full_code = code_lines.join("\n");
+        self.file_write(code_file.clone(), full_code)?;
+        std::fs::rename(&code_file.clone(), &self.file_path).map_err(|e| format!("Error renaming temp file to {}: {}", self.file_path, e))?;
         Ok(())
     }
+    fn as_any(&self) -> &dyn std::any::Any {self}
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {self}
 }
 
