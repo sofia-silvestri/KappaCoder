@@ -1,5 +1,6 @@
 use rand::{Rng, rng, random_range};
 use data_model::modules::{ModuleStruct, Version};
+use serde::{Serialize, Deserialize};
 use crate::coder::{Coder, to_snake_case};
 
 enum LibCoderParts {
@@ -10,7 +11,7 @@ enum LibCoderParts {
     EndGetModule,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LibCoder {
     modules: Vec<String>,
     module_structs: ModuleStruct,
@@ -37,9 +38,19 @@ impl LibCoder {
             tmp_path: "".to_string(),
         }
     }
+    pub fn save(&self) -> Result<(), String> {
+        let json_string = serde_json::to_string(self).map_err(|e| format!("Error serializing LibCoder: {}", e))?;
+        std::fs::write(format!("{}/.project/lib_coder.json", self.crate_path), json_string).map_err(|e| format!("Error writing LibCoder file: {}", e))?;
+        Ok(())
+    }
 
-    pub fn get_path(&self) -> String {
-        self.crate_path.clone()
+    pub fn load(path: String) -> Result<Self, String> {
+        let json_data = std::fs::read_to_string(path).map_err(|e| format!("Error reading LibCoder file: {}", e))?;
+        let json_data = json_data.as_str();
+        match serde_json::from_str(json_data) {
+            Ok(coder) => Ok(coder),
+            Err(e) => Err(format!("Error deserializing LibCoder: {}", e)),
+        }
     }
     
     pub fn add_module(&mut self, module_name: String) {
@@ -148,8 +159,14 @@ impl Coder for LibCoder {
         let full_code = code_lines.join("\n");
         self.file_write(code_file.clone(), full_code)?;
         std::fs::rename(&code_file.clone(), &self.file_path).map_err(|e| format!("Error renaming temp file to {}: {}", self.file_path, e))?;
+        self.save()?;
         Ok(())
     }
+
+    fn get_path(&self) -> String {
+        self.crate_path.clone()
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {self}
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {self}

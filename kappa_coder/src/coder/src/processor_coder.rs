@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
-use crate::coder::Coder;
+use serde::{Serialize, Deserialize};
+use crate::coder::{Coder, to_snake_case};
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum ModCoderParts {
     HeadMod,
@@ -51,12 +52,12 @@ impl TryFrom<String> for ModCoderParts {
         Self::try_from(int_code)
     }
 }
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Limits {
     min: String,
     max: String,
 }
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Typed {
     pub category: String,
     pub name: String,
@@ -65,7 +66,7 @@ pub struct Typed {
     pub limits: Option<Limits>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProcessorCoder {
     processor_name: String,
     inputs: HashMap<String, String>,
@@ -74,7 +75,8 @@ pub struct ProcessorCoder {
     statics: HashMap<String, Typed>,
     parameters: HashMap<String, Typed>,
     user_codes: HashMap<ModCoderParts, String>,
-    path: String,
+    crate_path: String,
+    file_path: String,
     tmp_path: String,
 }
 
@@ -109,6 +111,7 @@ impl ProcessorCoder {
         user_codes.insert(ModCoderParts::StopBody,    "
         self.set_state(StreamingState::Stopped);
         Ok(())".to_string());
+        let processor_file_name = to_snake_case(&processor_name);
         ProcessorCoder {
             processor_name,
             inputs: HashMap::new(),
@@ -116,9 +119,24 @@ impl ProcessorCoder {
             states: HashMap::new(),
             statics: HashMap::new(),
             parameters: HashMap::new(),
-            user_codes,
-            path,
+            user_codes: HashMap::new(),
+            crate_path: path.clone(),
+            file_path: format!("{}/src/{}.rs", path.clone(), processor_file_name.clone()),
             tmp_path: "".to_string(),
+        }
+    }
+    pub fn save(&self) -> Result<(), String> {
+        let json_string = serde_json::to_string(self).map_err(|e| format!("Error serializing LibCoder: {}", e))?;
+        std::fs::write(format!("{}/.project/{}.json", self.crate_path, self.processor_name), json_string).map_err(|e| format!("Error writing LibCoder file: {}", e))?;
+        Ok(())
+    }
+
+    pub fn load(path: String) -> Result<Self, String> {
+        let json_data = std::fs::read_to_string(path).map_err(|e| format!("Error reading LibCoder file: {}", e))?;
+        let json_data = json_data.as_str();
+        match serde_json::from_str(json_data) {
+            Ok(coder) => Ok(coder),
+            Err(e) => Err(format!("Error deserializing LibCoder: {}", e)),
         }
     }
     
@@ -340,10 +358,16 @@ impl Coder for ProcessorCoder {
         code_lines.push(self.generate_stop_body());
         let full_code = code_lines.join("\n");
         self.file_write(code_file.clone(), full_code)?;
-        println!("Moving temp file to file {}", &self.path);
-        std::fs::rename(&code_file.clone(), &self.path).map_err(|e| format!("Error renaming temp file to {}: {}", self.path, e))?;
+        println!("Moving temp file to file {}", &self.file_path);
+        std::fs::rename(&code_file.clone(), &self.file_path).map_err(|e| format!("Error renaming temp file to {}: {}", self.file_path, e))?;
+        self.save()?;
         Ok(())
     }
+
+    fn get_path(&self) -> String {
+        self.crate_path.clone()
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {self}
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {self}

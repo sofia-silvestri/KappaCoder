@@ -20,6 +20,7 @@ impl CargoInterface {
         Command::new(&self.cargo_path).arg("add").arg("stream_proc_macro").arg("--path").arg(format!("{}/processor_engine/src/stream_proc_macro", self.library_path)).status().expect("Failed to create the project");
         Command::new(&self.cargo_path).arg("add").arg("data_model").arg("--path").arg(format!("{}/data_model", self.library_path)).status().expect("Failed to create the project");
         Command::new(&self.cargo_path).arg("add").arg("utils").arg("--path").arg(format!("{}/utils", self.library_path)).status().expect("Failed to create the project");
+        Command::new("mkdir").arg("-p").arg(format!("{}/.project", path)).status().expect("Failed to create the .project folder");
         let res = std::env::set_current_dir(curr_dir);
         match res {
             Ok(_) => (),

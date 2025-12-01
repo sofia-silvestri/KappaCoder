@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
 use crate::coder::Coder;
 
 #[repr(u8)]
-#[derive(PartialEq, Eq, Hash, Clone)]
+#[derive(PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub enum MainCoderParts {
     HeadMain,
     UsedDefinedCode,
@@ -44,14 +45,14 @@ impl TryFrom<String> for MainCoderParts {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Connections {
     pub from_processor: String,
     pub from_output: String,
     pub to_processor: String,
     pub to_input: String,
 }
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub processor_name: String,
     pub settable_type: String,
@@ -59,13 +60,13 @@ pub struct Settings {
     pub value: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TaskProcessor {
     pub name: String,
     pub stream_processors: Vec<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MainCoder {
     task_proc: HashMap<String, TaskProcessor>,
     stream_proc: HashMap<String, String>,
@@ -87,8 +88,19 @@ impl MainCoder {
             file_path: format!("{}/src/main.rs", path.clone()),
         }
     }
-    pub fn get_path(&self) -> String {
-        self.crate_path.clone()
+    pub fn save(&self) -> Result<(), String> {
+        let json_string = serde_json::to_string(self).map_err(|e| format!("Error serializing LibCoder: {}", e))?;
+        std::fs::write(format!("{}/.project/main_coder.json", self.crate_path), json_string).map_err(|e| format!("Error writing LibCoder file: {}", e))?;
+        Ok(())
+    }
+
+    pub fn load(path: String) -> Result<Self, String> {
+        let json_data = std::fs::read_to_string(path).map_err(|e| format!("Error reading LibCoder file: {}", e))?;
+        let json_data = json_data.as_str();
+        match serde_json::from_str(json_data) {
+            Ok(coder) => Ok(coder),
+            Err(e) => Err(format!("Error deserializing LibCoder: {}", e)),
+        }
     }
     pub fn add_task_processor(&mut self, task_name: String) {
         self.task_proc.insert(task_name.clone(), TaskProcessor {
@@ -219,8 +231,13 @@ impl Coder for MainCoder {
         let full_code = code_lines.join("\n");
         self.file_write(code_file.clone(), full_code)?;
         std::fs::rename(&code_file.clone(), &self.file_path).map_err(|e| format!("Error renaming temp file to {}: {}", self.file_path, e))?;
+        self.save()?;
         Ok(())
     }
+    fn get_path(&self) -> String {
+        self.crate_path.clone()
+    }
+    
     fn as_any(&self) -> &dyn std::any::Any {self}
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {self}

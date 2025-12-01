@@ -55,6 +55,8 @@ pub trait Coder: Send + Sync + std::any::Any {
             Err(e) => Err(format!("Error moving file from {} to {}: {}", src, dest, e)),
         }
     }
+    fn get_path(&self) -> String;
+
     fn as_any(&self) -> &dyn std::any::Any;
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
