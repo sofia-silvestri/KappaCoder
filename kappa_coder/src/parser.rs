@@ -596,7 +596,6 @@ impl Parser {
             .and_then(|f| f.to_str())
             .ok_or_else(|| "Could not determine project name from import path.".to_string())?
             .to_string();
-        self.projects_map.insert(project_name.clone(), object_map);
         let main_coder_import_path = format!("{}/.project/main_coder.json", canonical_path_str);
         let lib_coder_import_path = format!("{}/.project/lib_coder.json", canonical_path_str);
         if std::path::Path::new(&main_coder_import_path).exists() {
@@ -611,10 +610,18 @@ impl Parser {
                     let processor_coder = ProcessorCoder::load(processor_coder_import_path.clone())?;
                     let processor_coder_name = format!("{}.{}", project_name.clone(), module);
                     self.coder_map.insert(processor_coder_name, Box::new(processor_coder));
+                } else {
+                    // Erase added processor coders
+                    for mod_ in modules.iter() {
+                        let processor_coder_name = format!("{}.{}", project_name.clone(), mod_);
+                        self.coder_map.remove(&processor_coder_name);
+                    }
+                    return Err(format!("Processor coder file {} not found during import.", processor_coder_import_path));
                 }
             }
             self.coder_map.insert(project_name.clone(), Box::new(lib_coder.clone()));
         }
+        self.projects_map.insert(project_name.clone(), object_map);
         Ok(())
     }
     pub fn parse_command(&mut self, command_string: String) -> ParserFunctionReturn {
