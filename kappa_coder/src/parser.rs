@@ -93,6 +93,7 @@ impl Parser {
         commands_fn.insert("delete".to_string(), Parser::parse_delete);
         commands_fn.insert("code".to_string(), Parser::parse_code);
         commands_fn.insert("build".to_string(), Parser::parse_build);
+        commands_fn.insert("import".to_string(), Parser::parse_import);
 
         let mut create_types_fn: HashMap<String, ParserFunction> = HashMap::new();
         create_types_fn.insert("crate".to_string(), Parser::create_crate);
@@ -159,7 +160,7 @@ impl Parser {
         object_map.insert(object_name.clone(), object);
         let json_string = serde_json::to_string(&object_map).map_err(|e| format!("Error serializing object map: {}", e))?;
         let coder = self.coder_map.get(&project_name).ok_or_else(|| format!("Coder for project {} not found.", project_name))?;
-        std::fs::write(format!("{}/.project/lib_coder.json", coder.get_path()), json_string).map_err(|e| format!("Error writing object map file: {}", e))?;
+        std::fs::write(format!("{}/.project/memory_map.json", coder.get_path()), json_string).map_err(|e| format!("Error writing object map file: {}", e))?;
         Ok(())
     }
 
@@ -258,7 +259,7 @@ impl Parser {
         };
         self.insert_in_memory_map(split_name[0].to_string(), object_name.clone(), memory_object)?;
         let mut coder: ProcessorCoder = self.get_coder::<ProcessorCoder>(parent_block.clone())?.clone();
-        coder.add_typed(&object_category.clone(), &object_name.clone(), &object_type.clone());
+        coder.add_typed(&object_category.clone(), &split_name[2].to_string(), &object_type.clone());
         coder.generate()?;
         self.coder_map.insert(parent_block.clone(), Box::new(coder));
         Ok(())
@@ -299,7 +300,7 @@ impl Parser {
         self.insert_in_memory_map(split_name[0].to_string(), object_name.clone(), memory_object)?;
 
         let mut coder: ProcessorCoder = self.get_coder::<ProcessorCoder>(parent_block.clone())?.clone();
-        coder.add_settable(&object_category.clone(), &object_name.clone(), &object_type.clone(), &object_value.clone(), object_limits);
+        coder.add_settable(&object_category.clone(), &split_name[2].to_string(), &object_type.clone(), &object_value.clone(), object_limits);
         coder.generate()?;
         self.coder_map.insert(parent_block.clone(), Box::new(coder));
         Ok(())
@@ -581,7 +582,41 @@ impl Parser {
         self.cargo_if.cargo_build(build_path.clone(), build_type.clone())?;
         Ok(())
     }
-     
+    pub fn parse_import(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {
+        let import_path = tokens.get(1).ok_or_else(|| "Missing import path".to_string())?;
+        let canonical_path = std::fs::canonicalize(&import_path).map_err(|_| "Import path does not exist.".to_string())?;
+        let canonical_path_str = canonical_path.to_str().unwrap().to_string();
+        let memory_map_file = format!("{}/.project/memory_map.json", canonical_path_str);
+        let json_string = std::fs::read_to_string(&memory_map_file).map_err(|e| format!("Error reading import file: {}", e))?;
+        let object_map: HashMap<String, MemoryObject> = serde_json::from_str(&json_string).map_err(|e| format!("Error deserializing import file: {}", e))?;
+        let project_name = Path::new(&canonical_path_str)
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.file_name())
+            .and_then(|f| f.to_str())
+            .ok_or_else(|| "Could not determine project name from import path.".to_string())?
+            .to_string();
+        self.projects_map.insert(project_name.clone(), object_map);
+        let main_coder_import_path = format!("{}/.project/main_coder.json", canonical_path_str);
+        let lib_coder_import_path = format!("{}/.project/lib_coder.json", canonical_path_str);
+        if std::path::Path::new(&main_coder_import_path).exists() {
+            let main_coder = MainCoder::load(main_coder_import_path.clone())?;
+            self.coder_map.insert(project_name.clone(), Box::new(main_coder));
+        } else if std::path::Path::new(&lib_coder_import_path).exists() {
+            let lib_coder = LibCoder::load(lib_coder_import_path.clone())?;
+            let modules = lib_coder.get_modules();
+            for module in modules.iter() {
+                let processor_coder_import_path = format!("{}/.project/{}.json", canonical_path_str, module);
+                if std::path::Path::new(&processor_coder_import_path).exists() {
+                    let processor_coder = ProcessorCoder::load(processor_coder_import_path.clone())?;
+                    let processor_coder_name = format!("{}.{}", project_name.clone(), module);
+                    self.coder_map.insert(processor_coder_name, Box::new(processor_coder));
+                }
+            }
+            self.coder_map.insert(project_name.clone(), Box::new(lib_coder.clone()));
+        }
+        Ok(())
+    }
     pub fn parse_command(&mut self, command_string: String) -> ParserFunctionReturn {
         let commands: Vec<String> = command_string
             .split(';')

@@ -62,6 +62,10 @@ impl LibCoder {
     pub fn delete_object(&mut self, object_name: &String) {
         self.modules.retain(|m| m != object_name);
     }
+
+    pub fn get_modules(&self) -> &Vec<String> {
+        &self.modules
+    }
     fn generate_module_section(&self) -> String {
         let mut code_lines: Vec<String> = Vec::new();
         for module in self.modules.iter() {
