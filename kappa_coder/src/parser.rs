@@ -195,6 +195,10 @@ impl Parser {
         let crate_path = format!("{}/{}", crate_folder, crate_name);
         self.cargo_if.cargo_new_library(crate_path.to_string())?;
         self.cargo_if.cargo_add_commands(crate_path.to_string())?; 
+        self.projects_map.insert(crate_name.clone(), HashMap::new());
+        let mut lib_coder = LibCoder::new(crate_path.clone());
+        lib_coder.generate()?;
+        self.coder_map.insert(crate_name.clone(), Box::new(lib_coder));
         let memory_object = MemoryObject {
             parent: "".to_string(),
             object_category: ObjectCategory::Crate,
@@ -202,11 +206,7 @@ impl Parser {
             object_value: metadata.clone(),
             object_limits: "".to_string(),
         };
-        self.projects_map.insert(crate_name.clone(), HashMap::new());
         self.insert_in_memory_map(crate_name.clone(), crate_name.clone(), memory_object)?;
-        let mut lib_coder = LibCoder::new(crate_path.clone());
-        lib_coder.generate()?;
-        self.coder_map.insert(crate_name.clone(), Box::new(lib_coder));
         Ok(())
     }
     fn create_stream_proc_block(&mut self, tokens: &Vec<String>) -> ParserFunctionReturn {

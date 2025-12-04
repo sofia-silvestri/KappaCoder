@@ -193,7 +193,7 @@ impl ProcessorCoder {
         let mut code_lines: Vec<String> = Vec::new();
         code_lines.push(format!("use std::collections::HashMap;"));
         code_lines.push(format!("use std::any::Any;"));
-        code_lines.push(format!("use std::fmt::Display;"));
+        code_lines.push(format!("use std::fmt::Debug;"));
         code_lines.push(format!("use std::sync::mpsc::SyncSender;"));
         code_lines.push(format!("use std::sync::{{Arc, Mutex}};"));
         code_lines.push(format!("use serde::Serialize;"));
